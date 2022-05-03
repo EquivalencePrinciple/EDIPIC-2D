@@ -1032,6 +1032,9 @@ MODULE MCCollisions
      REAL(8) M_amu
      REAL(8) N_m3
      REAL(8) T_K
+     REAL(8) Ux
+     REAL(8) Uy
+     REAL(8) Uz
      INTEGER N_en_colproc
      INTEGER N_of_energy_segments
      TYPE(collision_type), ALLOCATABLE :: en_colproc(:)
