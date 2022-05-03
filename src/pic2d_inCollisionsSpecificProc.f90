@@ -99,7 +99,7 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
         vx = ion(s)%part(i)%VX
         vy = ion(s)%part(i)%VY
         vz = ion(s)%part(i)%VZ
-        vsq = vx**2 + vy**2 +vz**2
+        vsq = (vx - (Ux/V_scale_ms))**2 + (vy - (Uy/V_scale_ms))**2 + (vz - (Uz/V_scale_ms))**2
         energy_eV = vsq * factor_eV
         vabs_ms = sqrt(vsq) * V_scale_ms 
 
@@ -112,9 +112,9 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
            call GetMaxwellVelocity(VX)
            call GetMaxwellVelocity(VY)
            call GetMaxwellVelocity(VZ)
-           ion(s)%part(i)%VX = VX * vfactor
-           ion(s)%part(i)%VY = VY * vfactor
-           ion(s)%part(i)%VZ = VZ * vfactor
+           ion(s)%part(i)%VX = (VX + Ux) * vfactor ! After ion - neu collision, resample ion velocity from Maxwellian drifting at netraul bulk velocity U and neutral temperature
+           ion(s)%part(i)%VY = (VY + Uy) * vfactor
+           ion(s)%part(i)%VZ = (VZ + Uz) * vfactor
 !           ion(s)%part(k)%tag = CXtag
            collision_rcx(s)%counter = collision_rcx(s)%counter + 1
 !        else
