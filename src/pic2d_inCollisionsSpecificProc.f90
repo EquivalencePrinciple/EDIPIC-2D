@@ -66,6 +66,7 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
 
   real(8) vx, vy, vz, vsq, energy_eV, vabs_ms
   real(8) probab_rcx
+  real(8) Ux, Uy, Uz 
 
 ! functions
   real(8) neutral_density_normalized, sigma_rcx_m2
@@ -87,6 +88,10 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
      sigma_m2_1eV = neutral(n)%sigma_rcx_m2_1eV
      alpha =        neutral(n)%alpha_rcx
      probab_rcx_therm_2  = (collision_rcx(s)%probab_thermal)**2
+
+     Ux = neutral(n)%Ux
+     Uy = neutral(n)%Uy
+     Uz = neutral(n)%Uz
 
      factor_eV = Ms(s) * energy_factor_eV         ! instead of collision_rcx(s)%factor_eV
      vfactor = collision_rcx(s)%vfactor           ! to convert Maxwellian sample
