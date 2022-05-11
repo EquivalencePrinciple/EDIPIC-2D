@@ -397,7 +397,7 @@ END SUBROUTINE en_Collision_Inelastic_20
 !
 SUBROUTINE en_Collision_Ionization_30(indx_neutral, indx_particle, energy_inc_eV, threshold_energy_eV, ion_species_produced, ion_velocity_factor, counter)
 
-!  USE MCCollisions
+  USE MCCollisions, ONLY : neutral
   USE ElectronParticles
   USE SetupValues, ONLY : factor_convert_vion_i
 !???  USE CurrentProblemValues
