@@ -626,7 +626,7 @@ SUBROUTINE en_Collision_Ionization_30(indx_neutral, indx_particle, energy_inc_eV
   Uz = neutral(indx_neutral)%Uz 
 
 ! Use the factor above to obtain the dim-less velocity (V * N_box_vel / V_te) of the produced ion
-  Vx_i = (Vx_i + Ux)  * ion_velocity_factor !factor_convert_vion_i(ion_species_produced)  !alpha_Vscl
+  Vx_i = (Vx_i + Ux) * ion_velocity_factor !factor_convert_vion_i(ion_species_produced)  !alpha_Vscl
   Vy_i = (Vy_i + Uy) * ion_velocity_factor !factor_convert_vion_i(ion_species_produced)  !alpha_Vscl
   Vz_i = (Vz_i + Uz) * ion_velocity_factor !factor_convert_vion_i(ion_species_produced)  !alpha_Vscl
 

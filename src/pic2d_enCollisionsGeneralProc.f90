@@ -113,12 +113,12 @@ SUBROUTINE INITIATE_ELECTRON_NEUTRAL_COLLISIONS
             CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
         END IF
 
-        READ (9, '(A1)') buf !-----ddddd.d--- Ux [m/s]
-        READ (9, '(5x,f7.1)') neutral(n)%Ux
-        READ (9, '(A1)') buf !-----ddddd.d--- Uy [m/s]
-        READ (9, '(5x,f7.1)') neutral(n)%Uy
-        READ (9, '(A1)') buf !-----ddddd.d--- Uz [m/s]
-        READ (9, '(5x,f7.1)') neutral(n)%Uz
+        READ (9, '(A1)') buf !----ddddd.dd--- Ux [units of neutral thermal velocity]
+        READ (9, '(4x,f8.2)') neutral(n)%Ux
+        READ (9, '(A1)') buf !----ddddd.dd--- Uy [units of neutral thermal velocity]
+        READ (9, '(4x,f8.2)') neutral(n)%Uy
+        READ (9, '(A1)') buf !----ddddd.dd--- Uz [units of neutral thermal velocity]
+        READ (9, '(4x,f8.2)') neutral(n)%Uz
      END DO
      
      CLOSE (9, STATUS = 'KEEP')

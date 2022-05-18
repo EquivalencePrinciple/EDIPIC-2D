@@ -104,7 +104,7 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
         vx = ion(s)%part(i)%VX
         vy = ion(s)%part(i)%VY
         vz = ion(s)%part(i)%VZ
-        vsq = (vx - (Ux/V_scale_ms))**2 + (vy - (Uy/V_scale_ms))**2 + (vz - (Uz/V_scale_ms))**2
+        vsq = (vx - (Ux * vfactor))**2 + (vy - (Uy * vfactor))**2 + (vz - (Uz * vfactor))**2
         energy_eV = vsq * factor_eV
         vabs_ms = sqrt(vsq) * V_scale_ms 
 
