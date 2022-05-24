@@ -95,9 +95,11 @@ SUBROUTINE INITIATE_ELECTRON_NEUTRAL_COLLISIONS
 
   IF (.NOT.exists) THEN
      IF (Rank_of_process.EQ.0) PRINT '("### file init_neutrals_velocity.dat not found, neutrals assumed to have zero bulk velocity ###")'
-     neutral(n)%Ux = 0.0_8
-     neutral(n)%Uy = 0.0_8
-     neutral(n)%Uz = 0.0_8
+     DO n = 1, N_neutral_spec
+        neutral(n)%Ux = 0.0_8
+        neutral(n)%Uy = 0.0_8
+        neutral(n)%Uz = 0.0_8
+     END DO
   END IF
 
   IF (exists) THEN
