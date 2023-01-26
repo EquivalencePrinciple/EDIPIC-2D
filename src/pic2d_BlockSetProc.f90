@@ -10,6 +10,7 @@ SUBROUTINE IDENTIFY_BLOCK_NEIGHBOURS
   USE ParallelOperationValues
   USE CurrentProblemValues
   USE BlockAndItsBoundaries
+  USE IonParticles, ONLY : N_spec
 
   IMPLICIT NONE
 
@@ -35,10 +36,36 @@ SUBROUTINE IDENTIFY_BLOCK_NEIGHBOURS
   indx_y_max =  block_row    * N_grid_block_y + 1 
 
   IF ((periodicity_flag.EQ.PERIODICITY_NONE).OR.(periodicity_flag.EQ.PERIODICITY_X_PETSC).OR.(periodicity_flag.EQ.PERIODICITY_X_Y)) THEN
-! these arrays are used in SOR
+! these arrays are used with a matrix field solver:
+! these arrays will never be resized or removed
      ALLOCATE(rho_i(indx_x_min:indx_x_max, indx_y_min:indx_y_max), STAT=ALLOC_ERR)  !
-     ALLOCATE(rho_e(indx_x_min:indx_x_max, indx_y_min:indx_y_max), STAT=ALLOC_ERR)  ! these arrays will never be resized or removed
+     ALLOCATE(rho_e(indx_x_min - 1 : indx_x_max + 1, indx_y_min - 1 : indx_y_max + 1), STAT=ALLOC_ERR) 
+!     ALLOCATE(rho_e_stream(indx_x_min - 1 : indx_x_max + 1, indx_y_min - 1 : indx_y_max + 1), STAT=ALLOC_ERR)
      ALLOCATE(  phi(indx_x_min:indx_x_max, indx_y_min:indx_y_max), STAT=ALLOC_ERR)  !
+
+     ALLOCATE(Chi_left(indx_x_min:indx_x_max + 1, indx_y_min:indx_y_max), STAT=ALLOC_ERR)     ! for electrons
+     ALLOCATE(Chi_down(indx_x_min:indx_x_max, indx_y_min:indx_y_max + 1), STAT=ALLOC_ERR)     ! for electrons
+!     ALLOCATE(Chi_i(indx_x_min:indx_x_max, indx_y_min:indx_y_max), STAT=ALLOC_ERR)         ! ion contribution to Chi evaluated at nodes
+     ALLOCATE(Chi_i(1:N_spec, indx_x_min - 1 : indx_x_max + 1, indx_y_min - 1 : indx_y_max + 1), STAT=ALLOC_ERR)
+
+     rho_i = 0.0_8
+     rho_e = 0.0_8
+     Chi_i = 0.0_8
+!     rho_e_stream = 0.0_8
+     phi   = 0.0_8
+
+     Chi_left = 0.0_8
+     Chi_down = 0.0_8
+
+     ALLOCATE(A11_left(0:N_spec, indx_x_min : 1 + indx_x_max, indx_y_min : indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(A12_left(0:N_spec, indx_x_min : 1 + indx_x_max, indx_y_min : indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(A21_left(0:N_spec, indx_x_min : 1 + indx_x_max, indx_y_min : indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(A22_left(0:N_spec, indx_x_min : 1 + indx_x_max, indx_y_min : indx_y_max), STAT=ALLOC_ERR)
+
+     ALLOCATE(A11_down(0:N_spec, indx_x_min : indx_x_max, indx_y_min : 1 + indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(A12_down(0:N_spec, indx_x_min : indx_x_max, indx_y_min : 1 + indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(A21_down(0:N_spec, indx_x_min : indx_x_max, indx_y_min : 1 + indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(A22_down(0:N_spec, indx_x_min : indx_x_max, indx_y_min : 1 + indx_y_max), STAT=ALLOC_ERR)
   END IF
 
   X_area_min = DBLE(indx_x_min)
@@ -51,8 +78,8 @@ SUBROUTINE IDENTIFY_BLOCK_NEIGHBOURS
 
   Rank_of_process_left  = Rank_of_process - 1
   Rank_of_process_right = Rank_of_process + 1
-  Rank_of_process_below = N_blocks_x * (block_row-2) + block_column - 1
-  Rank_of_process_above = N_blocks_x *  block_row    + block_column - 1
+  Rank_of_process_below = N_blocks_x * (block_row - 2) + block_column - 1 !same as Rank_of_process - N_blocks_x
+  Rank_of_process_above = N_blocks_x *  block_row      + block_column - 1 !same as Rank_of_process + N_blocks_x 
 
   IF (block_column.EQ.1)          Rank_of_process_left  = -1
   IF (block_column.EQ.N_blocks_x) Rank_of_process_right = -1
@@ -488,7 +515,8 @@ SUBROUTINE CALCULATE_BLOCK_OFFSET
 
   INTEGER N_of_nodes_to_solve_x, N_of_nodes_to_solve_y
 
-  INTEGER, ALLOCATABLE :: offset_of_block(:)
+!  INTEGER, ALLOCATABLE :: offset_of_block(:) !in a module
+!  INTEGER, ALLOCATABLE :: N_solve_x(:)
   INTEGER ALLOC_ERR
 
   INTEGER i, itemp
@@ -501,37 +529,43 @@ SUBROUTINE CALCULATE_BLOCK_OFFSET
 
   INTEGER ibufer(2)
 
-  N_of_nodes_to_solve_x = indx_x_max - indx_x_min - 1
+  N_of_nodes_to_solve_x = indx_x_max - indx_x_min - 1 ! nodes not on the block boundary, unless on the domain boundary
   IF (Rank_of_process_left.LT.0)  N_of_nodes_to_solve_x = N_of_nodes_to_solve_x + 1
   IF (Rank_of_process_right.LT.0) N_of_nodes_to_solve_x = N_of_nodes_to_solve_x + 1
   
   N_of_nodes_to_solve_y = indx_y_max - indx_y_min - 1
-  IF (Rank_of_process_below.LT.0) N_of_nodes_to_solve_y = N_of_nodes_to_solve_y + 1
+  IF (Rank_of_process_below.LT.0) N_of_nodes_to_solve_y = N_of_nodes_to_solve_y + 1 !extra row or column for blocks at the boundary
   IF (Rank_of_process_above.LT.0) N_of_nodes_to_solve_y = N_of_nodes_to_solve_y + 1
   
-  block_N_of_nodes_to_solve = N_of_nodes_to_solve_x * N_of_nodes_to_solve_y
+  block_N_of_nodes_to_solve = N_of_nodes_to_solve_x * N_of_nodes_to_solve_y    ! the number of lines contributed to the resulting matrix
 
-  ALLOCATE(offset_of_block(0:N_of_processes-1), STAT=ALLOC_ERR)
+  ALLOCATE(offset_of_block(0:N_of_processes-1), STAT=ALLOC_ERR) !each process given full array
+!!  ALLOCATE      (N_solve_x(0:N_of_processes-1), STAT=ALLOC_ERR) !each process given full array
 
   CALL MPI_GATHER(block_N_of_nodes_to_solve, 1, MPI_INTEGER, offset_of_block, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
+!!  CALL           MPI_GATHER(N_of_nodes_to_solve_x, 1, MPI_INTEGER, N_solve_x, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
   
   IF (Rank_of_process.EQ.0) THEN
-     N_to_solve_in_block_im1 = block_N_of_nodes_to_solve
-     offset_of_block(0) = 0
+     N_to_solve_in_block_im1 = block_N_of_nodes_to_solve !for process 0
+     offset_of_block(0) = 0 !offset_of_block is the global address of the first node to solve
      DO i = 1, N_of_processes-1
         itemp = offset_of_block(i)
         offset_of_block(i) = offset_of_block(i-1) + N_to_solve_in_block_im1
         N_to_solve_in_block_im1 = itemp
      END DO
-     N_to_solve_total = offset_of_block(N_of_processes-1) + N_to_solve_in_block_im1
+     N_to_solve_total = offset_of_block(N_of_processes-1) + N_to_solve_in_block_im1 !adding the last block
   END IF
 
-  CALL MPI_BCAST(offset_of_block, N_of_processes, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
-  CALL MPI_BCAST(N_to_solve_total, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
+  CALL MPI_BCAST(offset_of_block(0:N_of_processes-1), N_of_processes, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr) !offsets of all blocks are broadcast to each
+!!  CALL MPI_BCAST(N_solve_x, N_of_processes, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr) !row lengths of all blocks broadcast to each
+  CALL MPI_BCAST(N_to_solve_total, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr) 
 
-  global_offset = offset_of_block(Rank_of_process)-1 !######### check, should work if petsc numbering of rows/columns begins with zero
+  write (*,*) Rank_of_process, (offset_of_block(i), i=0, N_of_processes-1)
 
-  DEALLOCATE(offset_of_block, STAT=ALLOC_ERR)
+  global_offset = offset_of_block(Rank_of_process) - 1 !######### check, should work if petsc numbering of rows/columns begins with zero
+  ! global_offset is (-1) for Rank 0, block 1
+
+!!  DEALLOCATE(offset_of_block, STAT=ALLOC_ERR)
 
 ! talk to left/right neighbor to get process_left_bottom_right_inner_node    process_right_bottom_left_inner_node 
 !                                    process_left_solved_nodes_row_length    process_right_solved_nodes_row_length
@@ -543,7 +577,7 @@ SUBROUTINE CALCULATE_BLOCK_OFFSET
 
      IF (Rank_of_process_right.GE.0) THEN
 ! ## 1 ## send right
-        bottom_right_inner_node = global_offset + N_of_nodes_to_solve_x
+        bottom_right_inner_node = global_offset + N_of_nodes_to_solve_x !bottom left inner is global_offset + 1 = offset of block
         IF (Rank_of_process_below.LT.0) bottom_right_inner_node = bottom_right_inner_node + N_of_nodes_to_solve_x  ! skip line of nodes along the bottom boundary
         ibufer(1) = bottom_right_inner_node
         ibufer(2) = N_of_nodes_to_solve_x
@@ -552,7 +586,7 @@ SUBROUTINE CALCULATE_BLOCK_OFFSET
 
      IF (Rank_of_process_left.GE.0) THEN
 ! ## 2 ## send left
-        bottom_left_inner_node = global_offset + 1
+        bottom_left_inner_node = global_offset + 1  ! global mode index
         IF (Rank_of_process_below.LT.0) bottom_left_inner_node = bottom_left_inner_node + N_of_nodes_to_solve_x  ! skip line of nodes along the bottom boundary
         ibufer(1) = bottom_left_inner_node
         ibufer(2) = N_of_nodes_to_solve_x
@@ -601,7 +635,8 @@ SUBROUTINE CALCULATE_BLOCK_OFFSET
         process_above_left_bottom_inner_node = ibufer(1)
      END IF
  
-  ELSE
+  ELSE 
+  ! for "black" process
 
      IF (Rank_of_process_left.GE.0) THEN
 ! ## 1 ## receive from left
@@ -666,174 +701,4 @@ SUBROUTINE CALCULATE_BLOCK_OFFSET
   END IF
 
 END SUBROUTINE CALCULATE_BLOCK_OFFSET
-
-!------------------------------------------------
-!
-SUBROUTINE ANALYZE_BOUNDARY_OBJECTS
-
-  USE CurrentProblemValues
-
-  IMPLICIT NONE
-
-  INCLUDE 'mpif.h'
-
-  INTEGER ierr
-
-  INTEGER nobj, nseg
-  LOGICAL connection_found
-  INTEGER n, m
-
-  INTEGER connected_object
-  INTEGER connected_segment
-
-  INTEGER iv1x, iv1y
-  INTEGER iv2x, iv2y
-
-  DO nobj = 1, N_of_boundary_objects
-     DO nseg = 1, whole_object(nobj)%number_of_segments
-
-! find where the ends of this segment are connected to
-
-! first process the start point ---------------------------------------------------------------------------------
-
-        connection_found = .FALSE.
-
-        DO n = 1, N_of_boundary_objects
-           DO m = 1, whole_object(n)%number_of_segments
-! do not compare segment to itself
-              IF ((n.EQ.nobj).AND.(m.EQ.nseg)) CYCLE
-! try start of the other segment
-              IF ( (whole_object(nobj)%segment(nseg)%istart.EQ.whole_object(n)%segment(m)%istart).AND. &
-                 & (whole_object(nobj)%segment(nseg)%jstart.EQ.whole_object(n)%segment(m)%jstart) ) THEN
-                 connection_found = .TRUE.
-                 connected_object = n
-                 connected_segment = m
-                 EXIT
-              END IF
-! try end of the other segment
-              IF ( (whole_object(nobj)%segment(nseg)%istart.EQ.whole_object(n)%segment(m)%iend).AND. &
-                 & (whole_object(nobj)%segment(nseg)%jstart.EQ.whole_object(n)%segment(m)%jend) ) THEN
-                 connection_found = .TRUE.
-                 connected_object = n
-                 connected_segment = m
-                 EXIT
-              END IF
-           END DO
-           IF (connection_found) EXIT
-        END DO
-
-        IF (.NOT.connection_found) THEN
-           PRINT '("ERROR :: cannot find connection for the start point of object ",i4," segment ",i4," with i/j= ",2(2x,i6))', &
-                & nobj, nseg, whole_object(nobj)%segment(nseg)%istart, whole_object(nobj)%segment(nseg)%jstart
-           CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
-        END IF
-
-        n = connected_object
-        m = connected_segment
-! vector of object/segment nobj/nseg
-        iv1x = whole_object(nobj)%segment(nseg)%iend - whole_object(nobj)%segment(nseg)%istart
-        iv1y = whole_object(nobj)%segment(nseg)%jend - whole_object(nobj)%segment(nseg)%jstart
-! vector of object/segment n/m
-        iv2x = whole_object(n)%segment(m)%iend - whole_object(n)%segment(m)%istart
-        iv2y = whole_object(n)%segment(m)%jend - whole_object(n)%segment(m)%jstart
-
-        IF (n.EQ.nobj) THEN
-! start end of the segment is connected to another segment of the same object
-           IF ((iv1x * iv2y - iv1y * iv2x).EQ.0) THEN
-! vectors iv1 and iv2 (i.e. the two segments) are parallel, this should not happen
-              PRINT '("ERROR :: boundary object ",i4," has segments ",i4," and ",i4," connected and parallel")', &
-                & nobj, nseg, m
-              CALL MPI_ABORT(MPI_COMM_WORLD, ierr)           
-           ELSE
-! vectors iv1 and iv2 (i.e. the two segments) are orthogonal
-!### presently, it is assumed that this is a CONCAVE_CORNER, which works in a RECTANGULAR DOMAIN ONLY
-!### must be fixed if the whole domain consists of multiple rectangles, so that CONVEX_CORNER 
-              whole_object(nobj)%segment(nseg)%start_type = CONCAVE_CORNER
-           END IF
-        ELSE  !### IF (n.EQ.nobj) THEN
-! start end of the segment is connected to a segment of a different object
-           IF ((iv1x * iv2y - iv1y * iv2x).EQ.0) THEN
-! vectors iv1 and iv2 (i.e. the two segments) are parallel
-              whole_object(nobj)%segment(nseg)%start_type = END_FLAT
-           ELSE
-! vectors iv1 and iv2 (i.e. the two segments) are orthogonal
-!### presently, it is assumed that this is an END_CORNER_CONCAVE, which works in a RECTANGULAR DOMAIN ONLY
-!### must be fixed if the whole domain consists of multiple rectangles, where END_CORNER_CONVEX is possible
-              whole_object(nobj)%segment(nseg)%start_type = END_CORNER_CONCAVE
-           END IF
-        END IF  !### IF (n.EQ.nobj) THEN
-
-! now process the end point ---------------------------------------------------------------------------------
-
-        connection_found = .FALSE.
-
-        DO n = 1, N_of_boundary_objects
-           DO m = 1, whole_object(n)%number_of_segments
-! do not compare segment to itself
-              IF ((n.EQ.nobj).AND.(m.EQ.nseg)) CYCLE
-! try start of the other segment
-              IF ( (whole_object(nobj)%segment(nseg)%iend.EQ.whole_object(n)%segment(m)%istart).AND. &
-                 & (whole_object(nobj)%segment(nseg)%jend.EQ.whole_object(n)%segment(m)%jstart) ) THEN
-                 connection_found = .TRUE.
-                 connected_object = n
-                 connected_segment = m
-                 EXIT
-              END IF
-! try end of the other segment
-              IF ( (whole_object(nobj)%segment(nseg)%iend.EQ.whole_object(n)%segment(m)%iend).AND. &
-                 & (whole_object(nobj)%segment(nseg)%jend.EQ.whole_object(n)%segment(m)%jend) ) THEN
-                 connection_found = .TRUE.
-                 connected_object = n
-                 connected_segment = m
-                 EXIT
-              END IF
-           END DO
-           IF (connection_found) EXIT
-        END DO
-
-        IF (.NOT.connection_found) THEN
-           PRINT '("ERROR :: cannot find connection for the end point of object ",i4," segment ",i4," with i/j= ",2(2x,i6))', &
-                & nobj, nseg, whole_object(nobj)%segment(nseg)%iend, whole_object(nobj)%segment(nseg)%jend
-           CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
-        END IF
-
-        n = connected_object
-        m = connected_segment
-! vector of object/segment nobj/nseg (already known)
-!        iv1x = whole_object(nobj)%segment(nseg)%iend - whole_object(nobj)%segment(nseg)%istart
-!        iv1y = whole_object(nobj)%segment(nseg)%jend - whole_object(nobj)%segment(nseg)%jstart
-! vector of object/segment n/m
-        iv2x = whole_object(n)%segment(m)%iend - whole_object(n)%segment(m)%istart
-        iv2y = whole_object(n)%segment(m)%jend - whole_object(n)%segment(m)%jstart
-
-        IF (n.EQ.nobj) THEN
-! end of the segment is connected to another segment of the same object
-           IF ((iv1x * iv2y - iv1y * iv2x).EQ.0) THEN
-! vectors iv1 and iv2 (i.e. the two segments) are parallel, this should not happen
-              PRINT '("ERROR :: boundary object ",i4," has segments ",i4," and ",i4," connected and parallel")', &
-                & nobj, nseg, m
-              CALL MPI_ABORT(MPI_COMM_WORLD, ierr)           
-           ELSE
-! vectors iv1 and iv2 (i.e. the two segments) are orthogonal
-!### presently, it is assumed that this is a CONCAVE_CORNER, which works in a RECTANGULAR DOMAIN ONLY
-!### must be fixed if the whole domain consists of multiple rectangles, so that CONVEX_CORNER 
-              whole_object(nobj)%segment(nseg)%end_type = CONCAVE_CORNER
-           END IF
-        ELSE  !### IF (n.EQ.nobj) THEN
-! end of the segment is connected to a segment of a different object
-           IF ((iv1x * iv2y - iv1y * iv2x).EQ.0) THEN
-! vectors iv1 and iv2 (i.e. the two segments) are parallel
-              whole_object(nobj)%segment(nseg)%end_type = END_FLAT
-           ELSE
-! vectors iv1 and iv2 (i.e. the two segments) are orthogonal
-!### presently, it is assumed that this is an END_CORNER_CONCAVE, which works in a RECTANGULAR DOMAIN ONLY
-!### must be fixed if the whole domain consists of multiple rectangles, where END_CORNER_CONVEX is possible
-              whole_object(nobj)%segment(nseg)%end_type = END_CORNER_CONCAVE
-           END IF
-        END IF  !### IF (n.EQ.nobj) THEN
-
-     END DO   !###  DO nseg = 1, whole_object(n)%number_of_segments
-  END DO   !###  DO nobj = 1, N_of_boundary_objects
-
-END SUBROUTINE ANALYZE_BOUNDARY_OBJECTS
 

@@ -23,7 +23,7 @@ SUBROUTINE SET_PHYSICAL_CONSTANTS
  
   OPEN (9, FILE = 'init_physconstants.dat')
 
-  READ (9, '(A1)', IOSTAT=IOS) buf ! the vacuum permittivity constant is in the line below (the true value is 8.854188e-12 F/m)
+  READ (9, '(A1)', IOSTAT=IOS) buf ! --+d.ddddddE+dd the vacuum permittivity constant is in the line below (the true value is 8.854188e-12 F/m)
 
   IF (IOS.NE.0) THEN
      IF (Rank_of_process.EQ.0) PRINT '("###### Error while reading from file init_physconstants.dat, use default/true eps_0 = ",e15.8," F/m ######")', eps_0_Fm
@@ -113,6 +113,8 @@ SUBROUTINE INITIATE_PARAMETERS
 
   INTEGER init_random_seed
   REAL(8) myran
+
+  character(20) :: petsc_config='petsc.rc'   ! PETSc database file
 
   CHARACTER(32) bo_filename     ! boundary_object_NNN_segments.dat
                                 ! ----*----I----*----I----*----I--
@@ -239,24 +241,6 @@ SUBROUTINE INITIATE_PARAMETERS
                                             & whole_object(n)%segment(m)%jstart, &
                                             & whole_object(n)%segment(m)%iend, &
                                             & whole_object(n)%segment(m)%jend
-! sort endpoints so that start-end always goes either left-righ or bottom-top
-! also check that the segment is either vertical or horizontal
-        IF (whole_object(n)%segment(m)%istart.EQ.whole_object(n)%segment(m)%iend) THEN
-! vertical segment
-           itmp = MAX(whole_object(n)%segment(m)%jstart, whole_object(n)%segment(m)%jend)
-           whole_object(n)%segment(m)%jstart = MIN(whole_object(n)%segment(m)%jstart, whole_object(n)%segment(m)%jend)
-           whole_object(n)%segment(m)%jend   = itmp
-        ELSE IF (whole_object(n)%segment(m)%jstart.EQ.whole_object(n)%segment(m)%jend) THEN
-! horizontal segment
-           itmp = MAX(whole_object(n)%segment(m)%istart, whole_object(n)%segment(m)%iend)
-           whole_object(n)%segment(m)%istart = MIN(whole_object(n)%segment(m)%istart, whole_object(n)%segment(m)%iend)
-           whole_object(n)%segment(m)%iend   = itmp
-        ELSE
-! error
-           PRINT '("Process ",i4," ERROR in INITIATE_PARAMETERS : boundary object ",i4," has segment ",i4," with inconsistent start i/j ",2(2x,i6)," and end i/j ",2(2x,i6))', &
-                & Rank_of_process, n, m, whole_object(n)%segment(m)%istart, whole_object(n)%segment(m)%jstart, whole_object(n)%segment(m)%iend, whole_object(n)%segment(m)%jend
-           CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
-        END IF
      END DO
   END DO
 
@@ -402,40 +386,16 @@ SUBROUTINE INITIATE_PARAMETERS
   period_y_found = .FALSE.
   DO n = 1, N_of_boundary_objects
      IF (whole_object(n)%object_type.EQ.PERIODIC_PIPELINE_X) period_x_found = .TRUE.
-     IF (whole_object(n)%object_type.EQ.-PERIODIC_PIPELINE_X) THEN   !### if the flag is negative, use PETSc based solver
-        period_x_found = .TRUE.
-        periodicity_flag = PERIODICITY_X_PETSC
-        whole_object(n)%object_type = PERIODIC_PIPELINE_X            !### don't forget to fix the value
-     END IF
      IF (whole_object(n)%object_type.EQ.PERIODIC_PIPELINE_Y) period_y_found = .TRUE.
   END DO
-  IF (period_x_found) THEN
-     IF (periodicity_flag.EQ.PERIODICITY_NONE) periodicity_flag = PERIODICITY_X   ! if flag was set to PERIODICITY_X_PETSC above, this is skipped
-  END IF
-  IF (period_x_found.AND.period_y_found) periodicity_flag = PERIODICITY_X_Y       ! if flag was set to PERIODICITY_X_PETSC above, it is redefined here
+  IF (period_x_found)                    periodicity_flag = PERIODICITY_X
+  IF (period_x_found.AND.period_y_found) periodicity_flag = PERIODICITY_X_Y
   IF (period_y_found.AND.(.NOT.period_x_found)) THEN
 ! error, case with periodicity in y, no periodicity in x is not included
      PRINT '(2x,"Process ",i3," : ERROR : periodicity in Y requested without periodicity in X")', Rank_of_process
      CALL MPI_FINALIZE(ierr)
      STOP
   END IF
-
-!! identify whether periodicity was requested
-!  periodicity_flag = PERIODICITY_NONE
-!  period_x_found = .FALSE.
-!  period_y_found = .FALSE.
-!  DO n = 1, N_of_boundary_objects
-!     IF (whole_object(n)%object_type.EQ.PERIODIC_PIPELINE_X) period_x_found = .TRUE.
-!     IF (whole_object(n)%object_type.EQ.PERIODIC_PIPELINE_Y) period_y_found = .TRUE.
-!  END DO
-!  IF (period_x_found)                    periodicity_flag = PERIODICITY_X
-!  IF (period_x_found.AND.period_y_found) periodicity_flag = PERIODICITY_X_Y
-!  IF (period_y_found.AND.(.NOT.period_x_found)) THEN
-!! error, case with periodicity in y, no periodicity in x is not included
-!     PRINT '(2x,"Process ",i3," : ERROR : periodicity in Y requested without periodicity in X")', Rank_of_process
-!     CALL MPI_FINALIZE(ierr)
-!     STOP
-!  END IF
 
   IF (periodicity_flag.EQ.PERIODICITY_X_Y) THEN
 ! in a system periodic in both X and Y directions
@@ -463,11 +423,6 @@ SUBROUTINE INITIATE_PARAMETERS
         IF (Rank_of_process.EQ.0) PRINT '("### System periodic along the X-direction with ",i3," inner objects, FFT-based field solver is off, PETSc-based solver is used instead")', N_of_inner_objects
      END IF
   END IF
-
-!if ((periodicity_flag.EQ.PERIODICITY_X).and.(N_of_boundary_and_inner_objects.GT.4)) then
-!   periodicity_flag = PERIODICITY_X_PETSC
-!   IF (Rank_of_process.EQ.0) PRINT '("### System periodic along the X-direction with ",i3," boundary objects, FFT-based field solver is off, PETSc-based solver is used instead")', N_of_boundary_and_inner_objects
-!end if
 
 ! for periodic systems, check whether there are inner objects crossing periodic boundaries =============================================================================================================================
 ! if there are, identify matching objects (copies) at opposite periodic boundaries
@@ -719,8 +674,16 @@ SUBROUTINE INITIATE_PARAMETERS
   v_Te_ms     = SQRT(2.0_8 * T_e_eV * e_Cl / m_e_kg)
   W_plasma_s1 = SQRT(N_plasma_m3 * e_Cl**2 / (eps_0_Fm * m_e_kg))
   L_debye_m   = v_Te_ms / W_plasma_s1
-  delta_x_m   = L_debye_m / N_of_cells_debye    
+
+  IF(N_of_cells_debye.GT.0) THEN
+     delta_x_m = L_debye_m / N_of_cells_debye   
+  ELSE
+     delta_x_m = L_debye_m * (-N_of_cells_debye)
+  END IF
+
   delta_t_s   = delta_x_m / (N_max_vel * v_Te_ms)
+
+  delta_t_factor = 2.0_8 !!!
 
 ! save geometry of inner objects (note that we know delta_x_m now :)
 
@@ -832,7 +795,7 @@ SUBROUTINE INITIATE_PARAMETERS
   READ (9, '(A1)') buf !"---ddddddd.ddd----- simulation time [ns]")')
   READ (9, '(3x,f11.3)') t_sim_ns
   READ (9, '(A1)') buf !"--------dd--------- number of electron sub-cycles per ion cycle (odd)")')
-  READ (9, '(8x,i2)') N_subcycles
+  READ (9, '(8x,i2)') N_subcycles !ignored in the DI procedure 07/22/22
   READ (9, '(A1)') buf !"------dddd--------- number of ion cycles between internal cluster load balancing events")')
   READ (9, '(6x,i4)') dT_cluster_load_balance
   READ (9, '(A1)') buf !"------dddd--------- number of internal cluster load balancing events between global load balancing events")')
@@ -845,6 +808,8 @@ SUBROUTINE INITIATE_PARAMETERS
   READ (9, '(2x,i8)') T_cntr_to_continue
 
   CLOSE (9, STATUS = 'KEEP')
+
+  N_subcycles = 1
 
   Max_T_cntr = t_sim_ns / (1.0d9 * delta_t_s)
 
@@ -880,7 +845,7 @@ SUBROUTINE INITIATE_PARAMETERS
      PRINT '("### Maximal number of electron time steps ",i8," ###")', Max_T_cntr
      PRINT '("### Internal balancing of cluster load occurs every ",i7," electron time steps ###")', dT_cluster_load_balance
      PRINT '("### Global load balancing occurs every ",i7," electron time steps ###")', dT_global_load_balance
-     PRINT '("### Checkpoints will be saves every ",i7," electron time steps ###")', dT_save_checkpoint
+     PRINT '("### Checkpoints will be saved every ",i7," electron time steps ###")', dT_save_checkpoint
      IF (use_checkpoint.EQ.2) THEN
         PRINT '("### Simulation STARTS at saved checkpoint")'
      ELSE IF (use_checkpoint.EQ.1) THEN
@@ -897,10 +862,9 @@ SUBROUTINE INITIATE_PARAMETERS
 
   N_scale_part_m3 = N_plasma_m3 / N_of_particles_cell
   current_factor_Am2 = e_Cl * V_scale_ms * N_scale_part_m3
-  energy_factor_eV = 0.5_8 * m_e_kg * V_scale_ms**2 / e_Cl
+  energy_factor_eV =  0.5_8 * m_e_kg * V_scale_ms**2 / e_Cl
 
-  temperature_factor_eV = m_e_kg * V_scale_ms**2 / e_Cl
-  heat_flow_factor_Wm2 = 0.5_8 * m_e_kg * V_scale_ms**2 * N_scale_part_m3
+  Chi_factor = (delta_t_factor)**2 * 0.5_8 * (W_plasma_s1 * delta_t_s)**2 /  DBLE(N_of_particles_cell) ! for "implicit susceptibility" 
 
   given_F_double_period_sys = given_F_double_period_sys / F_scale_V
 
@@ -962,37 +926,10 @@ SUBROUTINE INITIATE_PARAMETERS
   c_row    = 1 + (block_row  - 1) / cluster_N_blocks_y
   c_column = 1 + (block_column-1) / cluster_N_blocks_x
 
-  CALL IDENTIFY_BLOCK_NEIGHBOURS ! index limits for field-related arrays are set here
-
-  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
-if (Rank_of_process.eq.0) print *, "IDENTIFY_BLOCK_NEIGHBOURS done"
-
-  CALL IDENTIFY_BLOCK_BOUNDARIES ! 
-
-  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
-if (Rank_of_process.eq.0) print *, "IDENTIFY_BLOCK_BOUNDARIES done"
-
-  CALL INCLUDE_BLOCK_PERIODICITY
-
-  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
-if (Rank_of_process.eq.0) print *, "INCLUDE_BLOCK_PERIODICITY done"
-
-  CALL CALCULATE_BLOCK_OFFSET
-  
-  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
-if (Rank_of_process.eq.0) print *, "CALCULATE_BLOCK_OFFSET done"
-
-  Rank_of_bottom_left_cluster_master = 0  ! in MPI_COMM_WORLD, ### in future, this may be some other process, fixmeplease!!!
-
-  CALL SET_CLUSTER_STRUCTURE
-
-  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
-if (Rank_of_process.eq.0) print *, "SET_CLUSTER_STRUCTURE done"
-
   INQUIRE (FILE = 'init_particles.dat', EXIST = exists)
   CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
 
-  IF (.NOT.exists) THEN   
+  IF (.NOT.exists) THEN
      PRINT '(2x,"Process ",i3," : ERROR : init_particles.dat not found. Program terminated")', Rank_of_process
      CALL MPI_FINALIZE(ierr)
      STOP
@@ -1026,11 +963,53 @@ if (Rank_of_process.eq.0) print *, "SET_CLUSTER_STRUCTURE done"
   IF (N_spec.EQ.1) THEN
      init_NiNe(1) = 1.0_8
   END IF
-     
+
   READ (9, '(A1)') buf !"---ddddddddd---- seed for random number generator for process with rank zero")')
   READ (9, '(3x,i9)') init_random_seed
 
-  CLOSE (9, STATUS = 'KEEP')
+  CLOSE (9, STATUS = 'KEEP')  
+
+  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
+
+  INQUIRE (FILE = 'init_filtering.dat', EXIST = exists)
+  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
+  IF (.NOT.exists) THEN
+     n_repeat = 0
+  ELSE
+     OPEN (9, FILE = 'init_filtering.dat')
+     READ(9, '(A1)') buf
+     READ(9, '(3x, i2)') n_repeat
+     WRITE (*,*) "order of filtering is", n_repeat
+     CLOSE(9, STATUS = 'KEEP')
+  END IF
+  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
+
+  CALL IDENTIFY_BLOCK_NEIGHBOURS ! index limits for field-related arrays are set here
+
+  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
+if (Rank_of_process.eq.0) print *, "IDENTIFY_BLOCK_NEIGHBOURS done"
+
+  CALL IDENTIFY_BLOCK_BOUNDARIES ! 
+
+  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
+if (Rank_of_process.eq.0) print *, "IDENTIFY_BLOCK_BOUNDARIES done"
+
+  CALL INCLUDE_BLOCK_PERIODICITY
+
+  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
+if (Rank_of_process.eq.0) print *, "INCLUDE_BLOCK_PERIODICITY done"
+
+  CALL CALCULATE_BLOCK_OFFSET
+  
+  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
+if (Rank_of_process.eq.0) print *, "CALCULATE_BLOCK_OFFSET done"
+
+  Rank_of_bottom_left_cluster_master = 0  ! in MPI_COMM_WORLD, ### in future, this may be some other process, fixmeplease!!!
+
+  CALL SET_CLUSTER_STRUCTURE
+
+  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
+if (Rank_of_process.eq.0) print *, "SET_CLUSTER_STRUCTURE done"
 
 ! NEW FILE ADDED: read in initial directed ion velocities from init_particles_velocity.dat
   INQUIRE (FILE = 'init_particles_velocity.dat', EXIST = exists)
@@ -1081,11 +1060,6 @@ if (Rank_of_process.eq.0) print *, "SET_CLUSTER_STRUCTURE done"
   CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
 
   CALL PREPARE_SETUP_VALUES                   ! <<<<<<<< SETUP <<<<<<<<< additional processes are here <<<<<<<<<<<<
-                                              ! also calls PREPARE_WAVEFORMS
-                                              !            PREPARE_OSCILLATIONS_AMPLITUDE_PROFILE
-                                              !            PREPARE_EXTERNAL_CIRCUIT which also calls 
-                                              !                                                PREPARE_ECPS_WAVEFORMS
-                                              !                                                PREPARE_ECPS_OSCILLATIONS_AMPLITUDE_PROFILE
 
   CALL PREPARE_WALL_MATERIALS                 ! the secondary electron emission is initialized here
   CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
@@ -1130,7 +1104,13 @@ if (Rank_of_process.eq.0) print *, "SET_CLUSTER_STRUCTURE done"
 
   ELSE
 
-     CALL SolverInitialization(MPI_COMM_WORLD)
+     CALL PetscInitialize(petsc_config, ierr)
+     MatVecsCreated = .false.
+!calculate the values of the transformation matrix at half-nodes
+     CALL SET_A_inverse_AT_HALFNODES !included with code for external fields, called once, after block structure is set
+
+     CALL SolverInitialization(MPI_COMM_WORLD, MatVecsCreated)
+     MatVecsCreated = .true.
 
   END IF
 
@@ -1146,6 +1126,8 @@ if (Rank_of_process.eq.0) print *, "SET_CLUSTER_STRUCTURE done"
      T_cntr_cluster_load_balance = T_cntr_cluster_load_balance - Start_T_cntr
      Start_T_cntr = 0
   END IF
+
+  IF (MOD(Max_T_cntr - Start_T_cntr, 2).EQ.0) Max_T_cntr = 1 + Max_T_cntr ! to end at the corrector half-step
 
   CALL SET_COMMUNICATIONS
 
@@ -1349,13 +1331,18 @@ SUBROUTINE SET_CLUSTER_STRUCTURE
 
 ! note that for non-master processes these arrays will be allocated/reallocated in subroutine DISTRIBUTE_CLUSTER_PARAMETERS
 ! which will be called every time the load balancing takes place and the set of processes in the cluster changes 
-     ALLOCATE(EX(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
-     ALLOCATE(EY(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
-     ALLOCATE(acc_EX(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
-     ALLOCATE(acc_EY(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+         ALLOCATE(EX(c_indx_x_min - 1 : c_indx_x_max, c_indx_y_min : c_indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(acc_EX(c_indx_x_min - 1 : c_indx_x_max, c_indx_y_min : c_indx_y_max), STAT=ALLOC_ERR)
+         ALLOCATE(EY(c_indx_x_min : c_indx_x_max, c_indx_y_min - 1 : c_indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(acc_EY(c_indx_x_min : c_indx_x_max, c_indx_y_min - 1 : c_indx_y_max), STAT=ALLOC_ERR)
 
-     acc_EX=0.0_8
-     acc_EY=0.0_8
+     ALLOCATE(c_phi(c_indx_x_min - 1 : c_indx_x_max + 1, c_indx_y_min - 1 : c_indx_y_max + 1), STAT=ALLOC_ERR)
+
+     EX = 0.0_8
+     EY = 0.0_8
+     acc_EX = 0.0_8
+     acc_EY = 0.0_8
+     c_phi  = 0.0_8
 
      IF (periodicity_flag.EQ.PERIODICITY_X) THEN
         ALLOCATE(c_rho(  c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
@@ -2547,7 +2534,7 @@ SUBROUTINE ANALYZE_CORNERS
   END IF
 
 print '("ANALYZE_CORNERS :: proc ",i4," corners LT/RT/LB/RB ",4(1x,i3))', Rank_of_process, c_left_top_corner_type, c_right_top_corner_type, c_left_bottom_corner_type, c_right_bottom_corner_type
-
+  write(*,*) Rank_of_process, "ANALYZED CORNERS"
 END SUBROUTINE ANALYZE_CORNERS
 
 !-------------------------------------------
@@ -2812,7 +2799,7 @@ SUBROUTINE SET_COMMUNICATIONS
 !  Rank_of_master_right   ! while Rank_horizontal_* are used for particle exchange
 !  Rank_of_master_above   ! Rank_of_master_* are used in particle advance procedure to distinguish between
 !  Rank_of_master_below   ! wall/no wall situations and properly place escaping particles 
-!                         ! even when no horizontal neighbors at the level of th eprocess are available
+!                         ! even when no horizontal neighbors at the level of the process are available
   
 print '("Process ",i4," particle_master ",i4," Rank_cluster ",i4," Rank_horizontal ",i4," neighbor horizontal ranks [L/R/A/B] ",4(2x,i4))', &
      & Rank_of_process, particle_master, Rank_cluster, Rank_horizontal, Rank_horizontal_left, Rank_horizontal_right, Rank_horizontal_above, Rank_horizontal_below
@@ -3017,16 +3004,16 @@ SUBROUTINE DISTRIBUTE_CLUSTER_PARAMETERS
      IF (ALLOCATED(acc_EX)) DEALLOCATE(acc_EX, STAT=ALLOC_ERR)
      IF (ALLOCATED(acc_EY)) DEALLOCATE(acc_EY, STAT=ALLOC_ERR)
 
-     ALLOCATE(EX(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
-     ALLOCATE(EY(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
-     ALLOCATE(acc_EX(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
-     ALLOCATE(acc_EY(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+         ALLOCATE(EX(c_indx_x_min - 1 : c_indx_x_max, c_indx_y_min : c_indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(acc_EX(c_indx_x_min - 1 : c_indx_x_max, c_indx_y_min : c_indx_y_max), STAT=ALLOC_ERR)    
+         ALLOCATE(EY(c_indx_x_min : c_indx_x_max, c_indx_y_min - 1 : c_indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(acc_EY(c_indx_x_min : c_indx_x_max, c_indx_y_min - 1 : c_indx_y_max), STAT=ALLOC_ERR)
      
 !#########
-!     EX=0.0_8 !-36.491_8 / E_scale_Vm !0.0_8
-!     EY=0.0_8 !-1.0_8 / E_scale_Vm
-     acc_EX=0.0_8 !-36.491_8 / E_scale_Vm !0.0_8
-     acc_EY=0.0_8 !-1.0_8 / E_scale_Vm
+     EX = 0.0_8 !-36.491_8 / E_scale_Vm !0.0_8
+     EY = 0.0_8 !-1.0_8 / E_scale_Vm
+     acc_EX = 0.0_8 !-36.491_8 / E_scale_Vm !0.0_8
+     acc_EY=  0.0_8 !-1.0_8 / E_scale_Vm
 !#########
 
      c_X_area_min = DBLE(c_indx_x_min)
@@ -3276,6 +3263,11 @@ SUBROUTINE DISTRIBUTE_PARTICLES
 
         CALL GetMaxwellVelocity(v)
         electron(k)%VZ = v * factor_convert + vz_drift
+
+        electron(k)%AX = 0.0_8 ! for DI electron advance
+        electron(k)%AY = 0.0_8
+        electron(k)%AZ = 0.0_8
+
         electron(k)%tag = 0
 
      END DO
@@ -3335,9 +3327,14 @@ SUBROUTINE DISTRIBUTE_PARTICLES
            ion(s)%part(k)%VX = (v + Uxi) * factor_convert
 
            CALL GetMaxwellVelocity(v)
+
            ion(s)%part(k)%VY = (v + Uyi) * factor_convert
 
            ion(s)%part(k)%VZ = Uzi * factor_convert
+
+           ion(s)%part(k)%AX = 0.0_8
+           ion(s)%part(k)%AY = 0.0_8
+
            ion(s)%part(k)%tag = 0
         END DO
      END DO

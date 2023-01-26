@@ -22,7 +22,7 @@ SUBROUTINE INITIATE_SNAPSHOTS
   CHARACTER (1) buf
   INTEGER flag
 
-  INTEGER saveflagi(1:38)           ! integer flags used to set values of logical flags controlling saving of data files
+  INTEGER saveflagi(1:32)           ! integer flags used to set values of logical flags controlling saving of data files
 
   INTEGER N_of_snap_groups          ! number of sets of snapshots, read from file
   INTEGER i                         ! set of snapshots
@@ -52,21 +52,18 @@ SUBROUTINE INITIATE_SNAPSHOTS
 
   INTEGER p
 
-! default values
   N_of_all_snaps = 0
-  save_data = .FALSE.
-  current_snap = 1
+  T2_old = -1
+  N2_old = 0
 
 ! read / write the data file 
   INQUIRE (FILE = 'init_snapshots.dat', EXIST = exists)
 
   IF (.NOT.exists) THEN
-     IF (Rank_of_process.EQ.0) PRINT '(2x,"### file init_snapshots.dat not found. Snapshots will NOT be created ... ###")'
-     RETURN
+     PRINT '(2x,"Process ",i4," : ERROR : file init_snapshots.dat not found. Program terminated")', Rank_of_process
+     CALL MPI_FINALIZE(ierr)
+     STOP
   END IF
-
-  T2_old = -1
-  N2_old = 0
 
   ALLOCATE(                     timestep(1:9999), STAT = ALLOC_ERR)
   ALLOCATE(           evdf_flag_timestep(1:9999), STAT = ALLOC_ERR)
@@ -78,21 +75,19 @@ SUBROUTINE INITIATE_SNAPSHOTS
 
   OPEN (9, FILE = 'init_snapshots.dat')
      
-  saveflagi = 0
-
   READ(9, '(A1)') buf  !--- save 2D maps of the following parameters? (1=yes, 0=no)
   READ(9, '(A1)') buf  !-----F----EX----EY--JXsum--JYsum--JZsum
   READ(9, '(A1)') buf  !----dd----dd----dd----dd----dd----dd
   READ(9, '(6(4x,i2))') saveflagi(1:6) 
-  READ(9, '(A1)') buf  !----Ne----JXe---JYe---JZe---VXe---VYe---VZe---WXe---WYe---WZe---TXe---TYe---TZe---QXe---QYe---QZe
-  READ(9, '(A1)') buf  !----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd
-  READ(9, '(16(4x,i2))') saveflagi(7:22)
-  READ(9, '(A1)') buf  !----Ni----JXi---JYi---JZi---VXi---VYi---VZi---WXi---WYi---WZi---TXi---TYi---TZi---QXi---QYi---QZi
-  READ(9, '(A1)') buf  !----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd
-  READ (9, '(16(4x,i2))') saveflagi(23:38)
+  READ(9, '(A1)') buf  !----Ne----JXe---JYe---JZe---VXe---VYe---VZe---WXe---WYe---WZe---TXe---TYe---TZe
+  READ(9, '(A1)') buf  !----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd
+  READ(9, '(13(4x,i2))') saveflagi(7:19)
+  READ(9, '(A1)') buf  !----Ni----JXi---JYi---JZi---VXi---VYi---VZi---WXi---WYi---WZi---TXi---TYi---TZi
+  READ(9, '(A1)') buf  !----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd----dd
+  READ (9, '(13(4x,i2))') saveflagi(20:32)
 
   save_data = .TRUE.
-  DO i = 1, 38
+  DO i = 1, 32
      IF (saveflagi(i).EQ.0) save_data(i) = .FALSE.
   END DO
 
@@ -188,9 +183,9 @@ SUBROUTINE INITIATE_SNAPSHOTS
 
   CLOSE (9, STATUS = 'KEEP')
 
-!  current_snap = 1   ! default value
+  current_snap = 1   ! default value
 
-! overrite if the system is initialized using a checkpoint
+! overwrite if the system is initialized using a checkpoint
   IF (use_checkpoint.EQ.1) current_snap = current_snap_check
 
 ! report about the general status of snapshot creation
@@ -275,24 +270,20 @@ SUBROUTINE INITIATE_SNAPSHOTS
   END IF
 
   IF (en_collisions_turned_off) RETURN
+  IF (no_ionization_collisions) RETURN
   IF (cluster_rank_key.NE.0) RETURN
+  IF (.NOT.save_ionization_rates_2d(current_snap))RETURN
 
-! create structure for collision diagnostics arrays, to be stored between snapshots by cluster masters only
+! create ionization rates diagnostics arrays, to be stored between snapshots by cluster masters only
   ALLOCATE(diagnostics_neutral(1:N_neutral_spec), STAT = ALLOC_ERR)
   DO n = 1, N_neutral_spec
      IF (collision_e_neutral(n)%N_of_activated_colproc.LE.0) CYCLE
      ALLOCATE(diagnostics_neutral(n)%activated_collision(1:collision_e_neutral(n)%N_of_activated_colproc), STAT = ALLOC_ERR)
-  END DO 
-
-  IF (no_ionization_collisions) RETURN
-  IF (.NOT.save_ionization_rates_2d(current_snap))RETURN
-
-! create ionization rates diagnostics arrays, to be stored between snapshots by cluster masters only
-  DO n = 1, N_neutral_spec
      DO p = 1, collision_e_neutral(n)%N_of_activated_colproc
+! presently do ionization collisions only
         IF (collision_e_neutral(n)%colproc_info(p)%type.LT.30) CYCLE
-        ALLOCATE(diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
-        diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local = 0.0
+        ALLOCATE(diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+        diagnostics_neutral(n)%activated_collision(p)%counter_local = 0.0
      END DO
   END DO
   
@@ -307,8 +298,9 @@ SUBROUTINE CREATE_SNAPSHOT
   USE CurrentProblemValues
   USE ClusterAndItsBoundaries
   USE BlockAndItsBoundaries
-  USE IonParticles, ONLY : N_spec, Qs, Ms
+  USE IonParticles, ONLY : N_spec
   USE MCCollisions
+  USE ClusterAndItsBoundaries
 
   IMPLICIT NONE
 
@@ -323,12 +315,6 @@ SUBROUTINE CREATE_SNAPSHOT
   INTEGER recsize, bufsize
   REAL, ALLOCATABLE :: rbufer(:)
 
-  REAL, ALLOCATABLE :: cs_temp(:,:)
-
-  REAL, ALLOCATABLE :: cs_JXsum(:,:)
-  REAL, ALLOCATABLE :: cs_JYsum(:,:)
-  REAL, ALLOCATABLE :: cs_JZsum(:,:)
-
   INTEGER pos1, pos2
 
 !                                 ! ----x----I----x----I
@@ -340,14 +326,12 @@ SUBROUTINE CREATE_SNAPSHOT
   CHARACTER(19) filename_Ve       ! _NNNN_VXe_ms_2D.bin
   CHARACTER(19) filename_We       ! _NNNN_WXe_eV_2D.bin
   CHARACTER(19) filename_Te       ! _NNNN_TXe_eV_2D.bin
-  CHARACTER(20) filename_Qe       ! _NNNN_QXe_Wm2_2D.bin
 !                                 ! ----x----I----x----I--
   CHARACTER(20) filename_Ni       ! _NNNN_Ni_s_m3_2D.bin
   CHARACTER(22) filename_Ji       ! _NNNN_JXi_s_Am2_2D.bin
   CHARACTER(21) filename_Vi       ! _NNNN_VXi_s_ms_2D.bin
   CHARACTER(21) filename_Wi       ! _NNNN_WXi_s_eV_2D.bin
   CHARACTER(21) filename_Ti       ! _NNNN_TXi_s_eV_2D.bin
-  CHARACTER(22) filename_Qi       ! _NNNN_QXi_s_Wm2_2D.bin
 !                                 ! ----x----I----x----I--
   CHARACTER(22) filename_Jsum     ! _NNNN_JXsum_Am2_2D.bin
 
@@ -371,110 +355,104 @@ SUBROUTINE CREATE_SNAPSHOT
 
   IF (Rank_of_process.EQ.0) PRINT '("### ^^^^^^^^^^^^^^^ Snapshot ",i4," will be created now ... ^^^^^^^^^^^^^^^^ ###")', current_snap
 
-  IF (cluster_rank_key.EQ.0) ALLOCATE(cs_temp(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT = ALLOC_ERR)
+  IF ((periodicity_flag.EQ.PERIODICITY_NONE).OR.(periodicity_flag.EQ.PERIODICITY_X_PETSC).OR.(periodicity_flag.EQ.PERIODICITY_X_Y)) THEN
 
-! potential
-
-  IF (save_data(1)) THEN
-
+! collect potential from field calculators ---------------------------------------------
      IF (cluster_rank_key.EQ.0) THEN
 
-        IF ((periodicity_flag.EQ.PERIODICITY_NONE).OR.(periodicity_flag.EQ.PERIODICITY_X_PETSC).OR.(periodicity_flag.EQ.PERIODICITY_X_Y)) THEN
-! PETSc-based field solver
+        ALLOCATE(cs_phi(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT = ALLOC_ERR)
+
 ! account for own contribution of the master as a field calculator
-           DO j = indx_y_min, indx_y_max
-              DO i = indx_x_min, indx_x_max
-                 cs_temp(i,j) = REAL(phi(i,j) * F_scale_V)
-              END DO
+        DO j = indx_y_min, indx_y_max
+           DO i = indx_x_min, indx_x_max
+              cs_phi(i,j) = REAL(phi(i,j) * F_scale_V)
            END DO
+        END DO
 
 ! account for contributions from other field calculators
-           DO k = 2, cluster_N_blocks
-              recsize = field_calculator(k)%indx_x_max - field_calculator(k)%indx_x_min + 1
-              bufsize = recsize * (field_calculator(k)%indx_y_max - field_calculator(k)%indx_y_min + 1)
-              ALLOCATE(rbufer(1:bufsize), STAT = ALLOC_ERR)
-              CALL MPI_RECV(rbufer, bufsize, MPI_REAL, field_calculator(k)%rank, field_calculator(k)%rank, MPI_COMM_WORLD, stattus, ierr)
-              pos2 = 0
-              DO j = field_calculator(k)%indx_y_min, field_calculator(k)%indx_y_max
-                 pos1 = pos2 + 1
-                 pos2 = pos2 + recsize
-                 cs_temp(field_calculator(k)%indx_x_min:field_calculator(k)%indx_x_max,j) = rbufer(pos1:pos2) 
-              END DO
-              DEALLOCATE(rbufer, STAT = ALLOC_ERR)
-           END DO
+        DO k = 2, cluster_N_blocks
 
-        ELSE
-! FFT-based field solver
-! the cluster already knows the potential within its domain, use it -----------------
-           DO j = c_indx_y_min, c_indx_y_max
-              DO i = c_indx_x_min, c_indx_x_max
-                 cs_temp(i,j) = REAL(c_phi(i,j) * F_scale_V)
-              END DO
-           END DO
-        END IF   !### IF ((periodicity_flag.EQ.PERIODICITY_NONE).OR.(periodicity_flag.EQ.PERIODICITY_X_PETSC).OR.(periodicity_flag.EQ.PERIODICITY_X_Y)) THEN
-
-        filename_F = '_NNNN_F_V_2D.bin'
-        filename_F(2:5) = convert_int_to_txt_string(current_snap, 4)
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_F)
-
-     ELSE   !### IF (cluster_rank_key.EQ.0) THEN
-
-        IF ((periodicity_flag.EQ.PERIODICITY_NONE).OR.(periodicity_flag.EQ.PERIODICITY_X_PETSC).OR.(periodicity_flag.EQ.PERIODICITY_X_Y)) THEN
-
-           recsize = indx_x_max - indx_x_min + 1
-           bufsize = recsize * (indx_y_max - indx_y_min + 1)
+           recsize = field_calculator(k)%indx_x_max - field_calculator(k)%indx_x_min + 1
+           bufsize = recsize * (field_calculator(k)%indx_y_max - field_calculator(k)%indx_y_min + 1)
 
            ALLOCATE(rbufer(1:bufsize), STAT = ALLOC_ERR)
 
-           pos1 = 1 - indx_x_min
-           DO j = indx_y_min, indx_y_max
-              DO i = indx_x_min, indx_x_max
-                 rbufer(pos1 + i) = REAL(phi(i, j) * F_scale_V)
-              END DO
-              pos1 = pos1 + recsize
+           CALL MPI_RECV(rbufer, bufsize, MPI_REAL, field_calculator(k)%rank, field_calculator(k)%rank, MPI_COMM_WORLD, stattus, ierr)
+
+           pos2 = 0
+           DO j = field_calculator(k)%indx_y_min, field_calculator(k)%indx_y_max
+              pos1 = pos2 + 1
+              pos2 = pos2 + recsize
+              cs_phi(field_calculator(k)%indx_x_min:field_calculator(k)%indx_x_max,j) = rbufer(pos1:pos2) 
            END DO
 
-           CALL MPI_SEND(rbufer, bufsize, MPI_REAL, field_master, Rank_of_process, MPI_COMM_WORLD, request, ierr) 
-
            DEALLOCATE(rbufer, STAT = ALLOC_ERR)
+
+        END DO
+
+     ELSE
+
+        recsize = indx_x_max - indx_x_min + 1
+        bufsize = recsize * (indx_y_max - indx_y_min + 1)
+
+        ALLOCATE(rbufer(1:bufsize), STAT = ALLOC_ERR)
+
+        pos1 = 1 - indx_x_min
+        DO j = indx_y_min, indx_y_max
+           DO i = indx_x_min, indx_x_max
+              rbufer(pos1 + i) = REAL(phi(i, j) * F_scale_V)
+           END DO
+           pos1 = pos1 + recsize
+        END DO
+
+        CALL MPI_SEND(rbufer, bufsize, MPI_REAL, field_master, Rank_of_process, MPI_COMM_WORLD, request, ierr) 
+
+        DEALLOCATE(rbufer, STAT = ALLOC_ERR)
         
-        END IF
+     END IF
 
-     END IF   !###   IF (cluster_rank_key.EQ.0) THEN
+  ELSE
 
-  END IF   !###   IF (save_data(1)) THEN
+! the cluster already knows the potential within its domain, use it -----------------
 
+     IF (cluster_rank_key.EQ.0) THEN
+
+        ALLOCATE(cs_phi(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT = ALLOC_ERR)
+
+        DO j = c_indx_y_min, c_indx_y_max
+           DO i = c_indx_x_min, c_indx_x_max
+              cs_phi(i,j) = REAL(c_phi(i,j) * F_scale_V)
+           END DO
+        END DO
+
+     END IF
+
+  END IF
+  
   CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
-
-! electric field components
 
   IF (cluster_rank_key.EQ.0) THEN
 
-     IF (save_data(2)) THEN
-        filename_E = '_NNNN_EX_Vm_2D.bin'
-        filename_E(2:5) = convert_int_to_txt_string(current_snap, 4)
-        DO j = c_indx_y_min, c_indx_y_max
-           DO i = c_indx_x_min, c_indx_x_max
-              cs_temp(i,j) = REAL(EX(i,j) * E_scale_Vm)
-           END DO
-        END DO
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_E)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr) 
-     END IF
+     ALLOCATE(cs_EX(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(cs_EY(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
 
-     IF (save_data(3)) THEN
-        filename_E = '_NNNN_EY_Vm_2D.bin'
-        filename_E(2:5) = convert_int_to_txt_string(current_snap, 4)
-        DO j = c_indx_y_min, c_indx_y_max
-           DO i = c_indx_x_min, c_indx_x_max
-              cs_temp(i,j) = REAL(EY(i,j) * E_scale_Vm)
-           END DO
+     DO j = c_indx_y_min, c_indx_y_max
+        DO i = c_indx_x_min, c_indx_x_max
+           cs_EX(i,j) = REAL(EX(i,j) * E_scale_Vm)
         END DO
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_E)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr) 
-     END IF
+     END DO
+  
+     DO j = c_indx_y_min, c_indx_y_max
+        DO i = c_indx_x_min, c_indx_x_max
+           cs_EY(i,j) = REAL(EY(i,j) * E_scale_Vm)
+        END DO
+     END DO
 
      ALLOCATE(cs_N(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+
+     ALLOCATE(cs_JX(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(cs_JY(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(cs_JZ(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
 
      ALLOCATE(cs_VX(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
      ALLOCATE(cs_VY(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
@@ -484,13 +462,31 @@ SUBROUTINE CREATE_SNAPSHOT
      ALLOCATE(cs_WY(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
      ALLOCATE(cs_WZ(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
 
-     ALLOCATE(cs_VXVY(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
-     ALLOCATE(cs_VXVZ(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
-     ALLOCATE(cs_VYVZ(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(cs_TX(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(cs_TY(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(cs_TZ(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
 
-     ALLOCATE(cs_QX(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
-     ALLOCATE(cs_QY(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
-     ALLOCATE(cs_QZ(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(cs_JXsum(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(cs_JYsum(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(cs_JZsum(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+
+     IF (N_vdfbox_all.GT.0) THEN
+
+        IF ((save_evdf_snapshot(current_snap).EQ.ONLY1D).OR.(save_evdf_snapshot(current_snap).EQ.BOTH1DAND2D)) THEN
+           ALLOCATE(evxdf(indx_v_min_e:indx_v_max_e, 1:N_vdfbox_all), STAT=ALLOC_ERR)
+           ALLOCATE(evydf(indx_v_min_e:indx_v_max_e, 1:N_vdfbox_all), STAT=ALLOC_ERR)
+           ALLOCATE(evzdf(indx_v_min_e:indx_v_max_e, 1:N_vdfbox_all), STAT=ALLOC_ERR)
+
+           ALLOCATE(isvxdf(indx_v_min_i:indx_v_max_i, 1:N_vdfbox_all, 1:N_spec), STAT=ALLOC_ERR)
+           ALLOCATE(isvydf(indx_v_min_i:indx_v_max_i, 1:N_vdfbox_all, 1:N_spec), STAT=ALLOC_ERR)
+           ALLOCATE(isvzdf(indx_v_min_i:indx_v_max_i, 1:N_vdfbox_all, 1:N_spec), STAT=ALLOC_ERR)
+        END IF
+
+        IF ((save_evdf_snapshot(current_snap).EQ.ONLY2D).OR.(save_evdf_snapshot(current_snap).EQ.BOTH1DAND2D)) THEN
+           ALLOCATE(evxvydf(indx_v_min_e:indx_v_max_e, indx_v_min_e:indx_v_max_e, 1:N_vdfbox_all), STAT=ALLOC_ERR)
+        END IF
+
+     END IF
 
   ELSE
 
@@ -501,609 +497,20 @@ SUBROUTINE CREATE_SNAPSHOT
 ! however, the compiler reports an error if the code is compiled with -C flag (check everything)
 ! this can be avoided if at least some minimal size arrays are allocated in the non-master processes
      ALLOCATE(cs_N(1,1), STAT=ALLOC_ERR)
-
      ALLOCATE(cs_VX(1,1), STAT=ALLOC_ERR)
      ALLOCATE(cs_VY(1,1), STAT=ALLOC_ERR)
      ALLOCATE(cs_VZ(1,1), STAT=ALLOC_ERR)
-
      ALLOCATE(cs_WX(1,1), STAT=ALLOC_ERR)
      ALLOCATE(cs_WY(1,1), STAT=ALLOC_ERR)
      ALLOCATE(cs_WZ(1,1), STAT=ALLOC_ERR)
 
-     ALLOCATE(cs_VXVY(1,1), STAT=ALLOC_ERR)
-     ALLOCATE(cs_VXVZ(1,1), STAT=ALLOC_ERR)
-     ALLOCATE(cs_VYVZ(1,1), STAT=ALLOC_ERR)
+     IF (N_vdfbox_all.GT.0) THEN
 
-     ALLOCATE(cs_QX(1,1), STAT=ALLOC_ERR)
-     ALLOCATE(cs_QY(1,1), STAT=ALLOC_ERR)
-     ALLOCATE(cs_QZ(1,1), STAT=ALLOC_ERR)
-
-  END IF
-
-  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
-
-! collect electron and ion velocity distribution function moments (density, flows, energies)
-
-! write electron moments to files ------------------------------------------
-
-  IF ( save_data(4).OR. &
-     & save_data(5).OR. &
-     & save_data(6).OR. &
-     & save_data(7).OR. &
-     & save_data(8).OR. &
-     & save_data(9).OR. &
-     & save_data(10).OR. &
-     & save_data(11).OR. &
-     & save_data(12).OR. &
-     & save_data(13).OR. &
-     & save_data(14).OR. &
-     & save_data(15).OR. &
-     & save_data(16).OR. &
-     & save_data(17).OR. &
-     & save_data(18).OR. &
-     & save_data(19).OR. &
-     & save_data(20).OR. &
-     & save_data(21).OR. &
-     & save_data(22) )  CALL COLLECT_ELECTRON_MOMENTS
-
-  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
-
-  IF (cluster_rank_key.EQ.0) THEN
-
-! full electric current, electron contribution
-
-     IF (save_data(4)) THEN
-        ALLOCATE(cs_JXsum(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
-        DO j = c_indx_y_min, c_indx_y_max
-           DO i = c_indx_x_min, c_indx_x_max
-              cs_JXsum(i,j) = -cs_N(i,j) * cs_VX(i,j)
-           END DO
-        END DO
-     END IF
-
-     IF (save_data(5)) THEN
-        ALLOCATE(cs_JYsum(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
-        DO j = c_indx_y_min, c_indx_y_max
-           DO i = c_indx_x_min, c_indx_x_max
-              cs_JYsum(i,j) = -cs_N(i,j) * cs_VY(i,j)
-           END DO
-        END DO
-     END IF
-
-     IF (save_data(6)) THEN
-        ALLOCATE(cs_JZsum(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
-        DO j = c_indx_y_min, c_indx_y_max
-           DO i = c_indx_x_min, c_indx_x_max
-              cs_JZsum(i,j) = -cs_N(i,j) * cs_VY(i,j)
-           END DO
-        END DO
-     END IF
-
-! number density
-
-     IF (save_data(7)) THEN
-        filename_Ne = '_NNNN_Ne_m3_2D.bin'
-        filename_Ne(2:5) = convert_int_to_txt_string(current_snap, 4)
-        cs_temp = cs_N * REAL(N_scale_part_m3)
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Ne)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-     END IF
-
-! electric current along each coordinate direction
-
-     IF (save_data(8)) THEN
-        filename_Je = '_NNNN_JXe_Am2_2D.bin'
-        filename_Je(2:5) = convert_int_to_txt_string(current_snap, 4)
-        DO j = c_indx_y_min, c_indx_y_max
-           DO i = c_indx_x_min, c_indx_x_max
-              cs_temp(i,j) = -cs_N(i,j) * cs_VX(i,j) * REAL(current_factor_Am2)              ! current_factor_Am2 = e_Cl * V_scale_ms * N_scale_part_m3 
-           END DO
-        END DO
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Je)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-     END IF
-
-     IF (save_data(9)) THEN
-        filename_Je = '_NNNN_JYe_Am2_2D.bin'
-        filename_Je(2:5) = convert_int_to_txt_string(current_snap, 4)
-        DO j = c_indx_y_min, c_indx_y_max
-           DO i = c_indx_x_min, c_indx_x_max
-              cs_temp(i,j) = -cs_N(i,j) * cs_VY(i,j) * REAL(current_factor_Am2)   ! 
-           END DO
-        END DO
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Je)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-     END IF
-
-     IF (save_data(10)) THEN
-        filename_Je = '_NNNN_JZe_Am2_2D.bin'
-        filename_Je(2:5) = convert_int_to_txt_string(current_snap, 4)
-        DO j = c_indx_y_min, c_indx_y_max
-           DO i = c_indx_x_min, c_indx_x_max
-              cs_temp(i,j) = -cs_N(i,j) * cs_VZ(i,j) * REAL(current_factor_Am2)   ! 
-           END DO
-        END DO
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Je)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-     END IF
-
-! average velocity along each coordinate direction
-
-     IF (save_data(11)) THEN
-        filename_Ve = '_NNNN_VXe_ms_2D.bin'
-        filename_Ve(2:5) = convert_int_to_txt_string(current_snap, 4)
-        cs_temp = cs_VX * REAL(V_scale_ms)                                                 ! V_scale_ms = N_max_vel * v_Te_ms
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Ve)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-     END IF
-
-     IF (save_data(12)) THEN
-        filename_Ve = '_NNNN_VYe_ms_2D.bin'
-        filename_Ve(2:5) = convert_int_to_txt_string(current_snap, 4)
-        cs_temp = cs_VY * REAL(V_scale_ms)
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Ve)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-     END IF
-
-     IF (save_data(13)) THEN
-        filename_Ve = '_NNNN_VZe_ms_2D.bin'
-        filename_Ve(2:5) = convert_int_to_txt_string(current_snap, 4)
-        cs_temp = cs_VZ * REAL(V_scale_ms)
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Ve)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-     END IF
-
-! average energy of motion along each coordinate direction
-
-     IF (save_data(14)) THEN
-        filename_We = '_NNNN_WXe_eV_2D.bin'
-        filename_We(2:5) = convert_int_to_txt_string(current_snap, 4)
-        cs_temp = cs_WX * REAL(energy_factor_eV)                                           ! energy_factor_eV = 0.5_8 * m_e_kg * V_scale_ms**2 / e_Cl
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_We)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-     END IF
-
-     IF (save_data(15)) THEN
-        filename_We = '_NNNN_WYe_eV_2D.bin'
-        filename_We(2:5) = convert_int_to_txt_string(current_snap, 4)
-        cs_temp = cs_WY * REAL(energy_factor_eV)
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_We)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-     END IF
-
-     IF (save_data(16)) THEN
-        filename_We = '_NNNN_WZe_eV_2D.bin'
-        filename_We(2:5) = convert_int_to_txt_string(current_snap, 4)
-        cs_temp = cs_WZ * REAL(energy_factor_eV)
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_We)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-     END IF
-
-! temperature along each coordinate direction
-
-     IF (save_data(17)) THEN
-        filename_Te = '_NNNN_TXe_eV_2D.bin'
-        filename_Te(2:5) = convert_int_to_txt_string(current_snap, 4)
-        DO j = c_indx_y_min, c_indx_y_max
-           DO i = c_indx_x_min, c_indx_x_max
-              cs_temp(i,j) = 0.0
-              IF (cs_N(i,j).LE.0.0) CYCLE
-              cs_temp(i,j) = MAX(0.0, cs_WX(i,j) - cs_VX(i,j)**2) * REAL(temperature_factor_eV)   ! temperature_factor_eV = m_e_kg * V_scale_ms**2 / e_Cl
-           END DO
-        END DO
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Te)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-     END IF
-
-     IF (save_data(18)) THEN
-        filename_Te = '_NNNN_TYe_eV_2D.bin'
-        filename_Te(2:5) = convert_int_to_txt_string(current_snap, 4)
-        DO j = c_indx_y_min, c_indx_y_max
-           DO i = c_indx_x_min, c_indx_x_max
-              cs_temp(i,j) = 0.0
-              IF (cs_N(i,j).LE.0.0) CYCLE
-              cs_temp(i,j) = MAX(0.0, cs_WY(i,j) - cs_VY(i,j)**2) * REAL(temperature_factor_eV)
-           END DO
-        END DO
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Te)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-     END IF
-
-     IF (save_data(19)) THEN
-        filename_Te = '_NNNN_TZe_eV_2D.bin'
-        filename_Te(2:5) = convert_int_to_txt_string(current_snap, 4)
-        DO j = c_indx_y_min, c_indx_y_max
-           DO i = c_indx_x_min, c_indx_x_max
-              cs_temp(i,j) = 0.0
-              IF (cs_N(i,j).LE.0.0) CYCLE
-              cs_temp(i,j) = MAX(0.0, cs_WZ(i,j) - cs_VZ(i,j)**2) * REAL(temperature_factor_eV)
-           END DO
-        END DO
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Te)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-     END IF
-
-! heat flow along each coordinate direction
-
-     IF (save_data(20)) THEN
-        filename_Qe = '_NNNN_QXe_Wm2_2D.bin'
-        filename_Qe(2:5) = convert_int_to_txt_string(current_snap, 4)
-        DO j = c_indx_y_min, c_indx_y_max
-           DO i = c_indx_x_min, c_indx_x_max
-              cs_temp(i,j) = cs_N(i,j) * cs_QX(i,j) * REAL(heat_flow_factor_Wm2)   ! heat_flow_factor_Wm2 = 0.5_8 * m_e_kg * V_scale_ms**2 * N_scale_part_m3
-           END DO
-        END DO
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Qe)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-     END IF
-
-     IF (save_data(21)) THEN
-        filename_Qe = '_NNNN_QYe_Wm2_2D.bin'
-        filename_Qe(2:5) = convert_int_to_txt_string(current_snap, 4)
-        DO j = c_indx_y_min, c_indx_y_max
-           DO i = c_indx_x_min, c_indx_x_max
-              cs_temp(i,j) = cs_N(i,j) * cs_QY(i,j) * REAL(heat_flow_factor_Wm2)
-           END DO
-        END DO
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Qe)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-     END IF
-
-     IF (save_data(22)) THEN
-        filename_Qe = '_NNNN_QZe_Wm2_2D.bin'
-        filename_Qe(2:5) = convert_int_to_txt_string(current_snap, 4)
-        DO j = c_indx_y_min, c_indx_y_max
-           DO i = c_indx_x_min, c_indx_x_max
-              cs_temp(i,j) = cs_N(i,j) * cs_QZ(i,j) * REAL(heat_flow_factor_Wm2)
-           END DO
-        END DO
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Qe)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-     END IF
-
-  END IF   !### IF (cluster_rank_key.EQ.0) THEN
-
-  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
-
-! write ion moments to files ------------------------------------------
-
-  DO s = 1, N_spec
-
-     IF ( save_data(4).OR. &
-        & save_data(5).OR. &
-        & save_data(6).OR. &
-        & save_data(23).OR. &
-        & save_data(24).OR. &
-        & save_data(25).OR. &
-        & save_data(26).OR. &
-        & save_data(27).OR. &
-        & save_data(28).OR. &
-        & save_data(29).OR. &
-        & save_data(30).OR. &
-        & save_data(31).OR. &
-        & save_data(32).OR. &
-        & save_data(33).OR. &
-        & save_data(34).OR. &
-        & save_data(35).OR. &
-        & save_data(36).OR. &
-        & save_data(37).OR. &
-        & save_data(38) ) CALL COLLECT_ION_MOMENTS(s)
-
-     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
-     
-     IF (cluster_rank_key.EQ.0) THEN
-
-! full electric current, ion contribution
-
-        IF (save_data(4)) THEN
-           DO j = c_indx_y_min, c_indx_y_max
-              DO i = c_indx_x_min, c_indx_x_max
-                 cs_JXsum(i,j) = cs_JXsum(i,j) + REAL(Qs(s)) * cs_N(i,j) * cs_VX(i,j)
-              END DO
-           END DO
-        END IF
-
-        IF (save_data(5)) THEN
-           DO j = c_indx_y_min, c_indx_y_max
-              DO i = c_indx_x_min, c_indx_x_max
-                 cs_JYsum(i,j) = cs_JYsum(i,j) + REAL(Qs(s)) * cs_N(i,j) * cs_VY(i,j)
-              END DO
-           END DO
-        END IF
-
-        IF (save_data(6)) THEN
-           DO j = c_indx_y_min, c_indx_y_max
-              DO i = c_indx_x_min, c_indx_x_max
-                 cs_JZsum(i,j) = cs_JZsum(i,j) + REAL(Qs(s)) * cs_N(i,j) * cs_VZ(i,j)
-              END DO
-           END DO
-        END IF
-
-! number density
-
-        IF (save_data(23)) THEN
-           filename_Ni = '_NNNN_Ni_s_m3_2D.bin'
-           filename_Ni(2:5) = convert_int_to_txt_string(current_snap, 4)
-           filename_Ni(10:10) = convert_int_to_txt_string(s, 1)
-           cs_temp = cs_N * REAL(N_scale_part_m3)
-           CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Ni)
-           CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-        END IF
-
-! electric current along each coordinate direction
-
-        IF (save_data(24)) THEN
-           filename_Ji = '_NNNN_JXi_s_Am2_2D.bin'
-           filename_Ji(2:5) = convert_int_to_txt_string(current_snap, 4)
-           filename_Ji(11:11) = convert_int_to_txt_string(s, 1)
-           DO j = c_indx_y_min, c_indx_y_max
-              DO i = c_indx_x_min, c_indx_x_max
-                 cs_temp(i,j) = cs_N(i,j) * cs_VX(i,j) * REAL(Qs(s) * current_factor_Am2)              ! current_factor_Am2 = e_Cl * V_scale_ms * N_scale_part_m3 
-              END DO
-           END DO
-           CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Ji)
-           CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-        END IF
-
-        IF (save_data(25)) THEN
-           filename_Ji = '_NNNN_JYi_s_Am2_2D.bin'
-           filename_Ji(2:5) = convert_int_to_txt_string(current_snap, 4)
-           filename_Ji(11:11) = convert_int_to_txt_string(s, 1)
-           DO j = c_indx_y_min, c_indx_y_max
-              DO i = c_indx_x_min, c_indx_x_max
-                 cs_temp(i,j) = cs_N(i,j) * cs_VY(i,j) * REAL(Qs(s) * current_factor_Am2)
-              END DO
-           END DO
-           CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Ji)
-           CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-        END IF
-
-        IF (save_data(26)) THEN
-           filename_Ji = '_NNNN_JZi_s_Am2_2D.bin'
-           filename_Ji(2:5) = convert_int_to_txt_string(current_snap, 4)
-           filename_Ji(11:11) = convert_int_to_txt_string(s, 1)
-           DO j = c_indx_y_min, c_indx_y_max
-              DO i = c_indx_x_min, c_indx_x_max
-                 cs_temp(i,j) = cs_N(i,j) * cs_VZ(i,j) * REAL(Qs(s) * current_factor_Am2)
-              END DO
-           END DO
-           CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Ji)
-           CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-        END IF
-
-! average velocity along each coordinate direction
-
-        IF (save_data(27)) THEN
-           filename_Vi = '_NNNN_VXi_s_ms_2D.bin'
-           filename_Vi(2:5) = convert_int_to_txt_string(current_snap, 4)
-           filename_Vi(11:11) = convert_int_to_txt_string(s, 1)
-           cs_temp = cs_VX * REAL(V_scale_ms)                                                 ! V_scale_ms = N_max_vel * v_Te_ms
-           CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Vi)
-           CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-        END IF
-
-        IF (save_data(28)) THEN
-           filename_Vi = '_NNNN_VYi_s_ms_2D.bin'
-           filename_Vi(2:5) = convert_int_to_txt_string(current_snap, 4)
-           filename_Vi(11:11) = convert_int_to_txt_string(s, 1)
-           cs_temp = cs_VY * REAL(V_scale_ms)
-           CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Vi)
-           CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-        END IF
-
-        IF (save_data(29)) THEN
-           filename_Vi = '_NNNN_VZi_s_ms_2D.bin'
-           filename_Vi(2:5) = convert_int_to_txt_string(current_snap, 4)
-           filename_Vi(11:11) = convert_int_to_txt_string(s, 1)
-           cs_temp = cs_VZ * REAL(V_scale_ms)
-           CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Vi)
-           CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-        END IF
-
-! average energy of motion along each coordinate direction
-
-        IF (save_data(30)) THEN
-           filename_Wi = '_NNNN_WXi_s_eV_2D.bin'
-           filename_Wi(2:5) = convert_int_to_txt_string(current_snap, 4)
-           filename_Wi(11:11) = convert_int_to_txt_string(s, 1)
-           cs_temp = cs_WX * REAL(Ms(s) * energy_factor_eV)                                    ! energy_factor_eV = 0.5_8 * m_e_kg * V_scale_ms**2 / e_Cl
-           CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Wi)
-           CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-        END IF
-
-        IF (save_data(31)) THEN
-           filename_Wi = '_NNNN_WYi_s_eV_2D.bin'
-           filename_Wi(2:5) = convert_int_to_txt_string(current_snap, 4)
-           filename_Wi(11:11) = convert_int_to_txt_string(s, 1)
-           cs_temp = cs_WY * REAL(Ms(s) * energy_factor_eV)
-           CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Wi)
-           CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-        END IF
-
-        IF (save_data(32)) THEN
-           filename_Wi = '_NNNN_WZi_s_eV_2D.bin'
-           filename_Wi(2:5) = convert_int_to_txt_string(current_snap, 4)
-           filename_Wi(11:11) = convert_int_to_txt_string(s, 1)
-           cs_temp = cs_WZ * REAL(Ms(s) * energy_factor_eV)
-           CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Wi)
-           CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-        END IF
-
-! temperature along each coordinate direction
-
-        IF (save_data(33)) THEN
-           filename_Ti = '_NNNN_TXi_s_eV_2D.bin'
-           filename_Ti(2:5) = convert_int_to_txt_string(current_snap, 4)
-           filename_Ti(11:11) = convert_int_to_txt_string(s, 1)
-           DO j = c_indx_y_min, c_indx_y_max
-              DO i = c_indx_x_min, c_indx_x_max
-                 cs_temp(i,j) = 0.0
-                 IF (cs_N(i,j).LE.0.0) CYCLE
-                 cs_temp(i,j) = MAX(0.0, cs_WX(i,j) - cs_VX(i,j)**2) * REAL(Ms(s) * temperature_factor_eV)   ! temperature_factor_eV = m_e_kg * V_scale_ms**2 / e_Cl
-              END DO
-           END DO
-           CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Ti)
-           CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-        END IF
-
-        IF (save_data(34)) THEN
-           filename_Ti = '_NNNN_TYi_s_eV_2D.bin'
-           filename_Ti(2:5) = convert_int_to_txt_string(current_snap, 4)
-           filename_Ti(11:11) = convert_int_to_txt_string(s, 1)
-           DO j = c_indx_y_min, c_indx_y_max
-              DO i = c_indx_x_min, c_indx_x_max
-                 cs_temp(i,j) = 0.0
-                 IF (cs_N(i,j).LE.0.0) CYCLE
-                 cs_temp(i,j) = MAX(0.0, cs_WY(i,j) - cs_VY(i,j)**2) * REAL(Ms(s) * temperature_factor_eV)
-              END DO
-           END DO
-           CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Ti)
-           CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-        END IF
-
-        IF (save_data(35)) THEN
-           filename_Ti = '_NNNN_TZi_s_eV_2D.bin'
-           filename_Ti(2:5) = convert_int_to_txt_string(current_snap, 4)
-           filename_Ti(11:11) = convert_int_to_txt_string(s, 1)
-           DO j = c_indx_y_min, c_indx_y_max
-              DO i = c_indx_x_min, c_indx_x_max
-                 cs_temp(i,j) = 0.0
-                 IF (cs_N(i,j).LE.0.0) CYCLE
-                 cs_temp(i,j) = MAX(0.0, cs_WZ(i,j) - cs_VZ(i,j)**2) * REAL(Ms(s) * temperature_factor_eV)
-              END DO
-           END DO
-           CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Ti)
-           CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-        END IF
-
-! heat flow along each coordinate direction
-
-        IF (save_data(36)) THEN
-           filename_Qi = '_NNNN_QXi_s_Wm2_2D.bin'
-           filename_Qi(2:5) = convert_int_to_txt_string(current_snap, 4)
-           filename_Qi(11:11) = convert_int_to_txt_string(s, 1)
-           DO j = c_indx_y_min, c_indx_y_max
-              DO i = c_indx_x_min, c_indx_x_max
-                 cs_temp(i,j) = cs_N(i,j) * cs_QX(i,j) * REAL(Ms(s) * heat_flow_factor_Wm2)   ! heat_flow_factor_Wm2 = 0.5_8 * m_e_kg * V_scale_ms**2 * N_scale_part_m3
-              END DO
-           END DO
-           CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Qi)
-           CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-        END IF
-
-        IF (save_data(37)) THEN
-           filename_Qi = '_NNNN_QYi_s_Wm2_2D.bin'
-           filename_Qi(2:5) = convert_int_to_txt_string(current_snap, 4)
-           filename_Qi(11:11) = convert_int_to_txt_string(s, 1)
-           DO j = c_indx_y_min, c_indx_y_max
-              DO i = c_indx_x_min, c_indx_x_max
-                 cs_temp(i,j) = cs_N(i,j) * cs_QY(i,j) * REAL(Ms(s) * heat_flow_factor_Wm2)
-              END DO
-           END DO
-           CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Qi)
-           CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-        END IF
-
-        IF (save_data(38)) THEN
-           filename_Qi = '_NNNN_QZi_s_Wm2_2D.bin'
-           filename_Qi(2:5) = convert_int_to_txt_string(current_snap, 4)
-           filename_Qi(11:11) = convert_int_to_txt_string(s, 1)
-           DO j = c_indx_y_min, c_indx_y_max
-              DO i = c_indx_x_min, c_indx_x_max
-                 cs_temp(i,j) = cs_N(i,j) * cs_QZ(i,j) * REAL(Ms(s) * heat_flow_factor_Wm2)
-              END DO
-           END DO
-           CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Qi)
-           CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-        END IF
-
-     END IF   ! ### IF (cluster_rank_key.EQ.0) THEN
-
-     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
-
-  END DO   !### DO s = 1, N_spec
-
-! cleanup
-
-  DEALLOCATE(cs_N, STAT = ALLOC_ERR)
-
-  DEALLOCATE(cs_VX, STAT = ALLOC_ERR)
-  DEALLOCATE(cs_VY, STAT = ALLOC_ERR)
-  DEALLOCATE(cs_VZ, STAT = ALLOC_ERR)
-
-  DEALLOCATE(cs_WX, STAT = ALLOC_ERR)
-  DEALLOCATE(cs_WY, STAT = ALLOC_ERR)
-  DEALLOCATE(cs_WZ, STAT = ALLOC_ERR)
-
-  DEALLOCATE(cs_VXVY, STAT = ALLOC_ERR)
-  DEALLOCATE(cs_VXVZ, STAT = ALLOC_ERR)
-  DEALLOCATE(cs_VYVZ, STAT = ALLOC_ERR)
-
-  DEALLOCATE(cs_QX, STAT = ALLOC_ERR)
-  DEALLOCATE(cs_QY, STAT = ALLOC_ERR)
-  DEALLOCATE(cs_QZ, STAT = ALLOC_ERR)
-
-! FULL electric current (sum of electron and ion currents) along each coordinate direction
-  IF (cluster_rank_key.EQ.0) THEN
-
-     IF (save_data(4)) THEN
-        filename_Jsum = '_NNNN_JXsum_Am2_2D.bin'
-        filename_Jsum(2:5) = convert_int_to_txt_string(current_snap, 4)
-        cs_temp = cs_JXsum * REAL(current_factor_Am2)                           ! current_factor_Am2 = e_Cl * V_scale_ms * N_scale_part_m3 
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Jsum)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
-! cleanup
-        DEALLOCATE(cs_JXsum, STAT = ALLOC_ERR)
-     END IF
-
-     IF (save_data(5)) THEN
-        filename_Jsum = '_NNNN_JYsum_Am2_2D.bin'
-        filename_Jsum(2:5) = convert_int_to_txt_string(current_snap, 4)
-        cs_temp = cs_JYsum * REAL(current_factor_Am2)
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Jsum)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr) 
-! cleanup
-        DEALLOCATE(cs_JYsum, STAT = ALLOC_ERR)
-     END IF
-
-     IF (save_data(6)) THEN
-        filename_Jsum = '_NNNN_JZsum_Am2_2D.bin'
-        filename_Jsum(2:5) = convert_int_to_txt_string(current_snap, 4)
-        cs_temp = cs_JZsum * REAL(current_factor_Am2)
-        CALL SAVE_GLOBAL_2D_ARRAY(cs_temp, filename_Jsum)
-        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr) 
-! cleanup
-        DEALLOCATE(cs_JZsum, STAT = ALLOC_ERR)
-     END IF
-
-! cleanup
-     DEALLOCATE(cs_temp, STAT = ALLOC_ERR)
-
-  END IF
-
-  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
-
-! velocity distribution functions -----------------------
-
-  IF (N_vdfbox_all.GT.0) THEN
-     IF (cluster_rank_key.EQ.0) THEN
         IF ((save_evdf_snapshot(current_snap).EQ.ONLY1D).OR.(save_evdf_snapshot(current_snap).EQ.BOTH1DAND2D)) THEN
-           ALLOCATE( evxdf(indx_v_min_e:indx_v_max_e, 1:N_vdfbox_all), STAT=ALLOC_ERR)
-           ALLOCATE( evydf(indx_v_min_e:indx_v_max_e, 1:N_vdfbox_all), STAT=ALLOC_ERR)
-           ALLOCATE( evzdf(indx_v_min_e:indx_v_max_e, 1:N_vdfbox_all), STAT=ALLOC_ERR)
-           ALLOCATE(isvxdf(indx_v_min_i:indx_v_max_i, 1:N_vdfbox_all, 1:N_spec), STAT=ALLOC_ERR)
-           ALLOCATE(isvydf(indx_v_min_i:indx_v_max_i, 1:N_vdfbox_all, 1:N_spec), STAT=ALLOC_ERR)
-           ALLOCATE(isvzdf(indx_v_min_i:indx_v_max_i, 1:N_vdfbox_all, 1:N_spec), STAT=ALLOC_ERR)
-        END IF
+           ALLOCATE(evxdf(1,1), STAT=ALLOC_ERR)
+           ALLOCATE(evydf(1,1), STAT=ALLOC_ERR)
+           ALLOCATE(evzdf(1,1), STAT=ALLOC_ERR)
 
-        IF ((save_evdf_snapshot(current_snap).EQ.ONLY2D).OR.(save_evdf_snapshot(current_snap).EQ.BOTH1DAND2D)) THEN
-           ALLOCATE(evxvydf(indx_v_min_e:indx_v_max_e, indx_v_min_e:indx_v_max_e, 1:N_vdfbox_all), STAT=ALLOC_ERR)
-        END IF
-     ELSE
-        IF ((save_evdf_snapshot(current_snap).EQ.ONLY1D).OR.(save_evdf_snapshot(current_snap).EQ.BOTH1DAND2D)) THEN
-           ALLOCATE( evxdf(1,1), STAT=ALLOC_ERR)
-           ALLOCATE( evydf(1,1), STAT=ALLOC_ERR)
-           ALLOCATE( evzdf(1,1), STAT=ALLOC_ERR)
            ALLOCATE(isvxdf(1,1,1), STAT=ALLOC_ERR)
            ALLOCATE(isvydf(1,1,1), STAT=ALLOC_ERR)
            ALLOCATE(isvzdf(1,1,1), STAT=ALLOC_ERR)
@@ -1112,8 +519,303 @@ SUBROUTINE CREATE_SNAPSHOT
         IF ((save_evdf_snapshot(current_snap).EQ.ONLY2D).OR.(save_evdf_snapshot(current_snap).EQ.BOTH1DAND2D)) THEN
            ALLOCATE(evxvydf(1,1,1), STAT=ALLOC_ERR)
         END IF
+
      END IF
+
   END IF
+
+  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
+
+! write electrostatic field parameters to files ----------------------------
+
+! potential
+
+  IF (save_data(1)) THEN
+     filename_F = '_NNNN_F_V_2D.bin'
+     filename_F(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_phi, filename_F)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+! electric field components
+
+  IF (save_data(2)) THEN
+     filename_E = '_NNNN_EX_Vm_2D.bin'
+     filename_E(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_EX, filename_E)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+  IF (save_data(3)) THEN
+     filename_E = '_NNNN_EY_Vm_2D.bin'
+     filename_E(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_EY, filename_E)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+!  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
+
+! collect electron and ion velocity distribution function moments (density, flows, energies)
+
+! write electron moments to files ------------------------------------------
+
+  CALL COLLECT_ELECTRON_MOMENTS
+
+  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
+
+! number density
+
+  IF (save_data(7)) THEN
+     filename_Ne = '_NNNN_Ne_m3_2D.bin'
+     filename_Ne(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_N, filename_Ne)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+! electric current along each coordinate direction
+
+  IF (save_data(8)) THEN
+     filename_Je = '_NNNN_JXe_Am2_2D.bin'
+     filename_Je(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_JX, filename_Je)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+  IF (save_data(9)) THEN
+     filename_Je = '_NNNN_JYe_Am2_2D.bin'
+     filename_Je(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_JY, filename_Je)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+  IF (save_data(10)) THEN
+     filename_Je = '_NNNN_JZe_Am2_2D.bin'
+     filename_Je(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_JZ, filename_Je)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+! average velocity along each coordinate direction
+
+  IF (save_data(11)) THEN
+     filename_Ve = '_NNNN_VXe_ms_2D.bin'
+     filename_Ve(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_VX, filename_Ve)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+  IF (save_data(12)) THEN
+     filename_Ve = '_NNNN_VYe_ms_2D.bin'
+     filename_Ve(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_VY, filename_Ve)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+  IF (save_data(13)) THEN
+     filename_Ve = '_NNNN_VZe_ms_2D.bin'
+     filename_Ve(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_VZ, filename_Ve)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+! average energy of FULL motion along each coordinate direction
+
+  IF (save_data(14)) THEN
+     filename_We = '_NNNN_WXe_eV_2D.bin'
+     filename_We(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_WX, filename_We)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+  IF (save_data(15)) THEN
+     filename_We = '_NNNN_WYe_eV_2D.bin'
+     filename_We(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_WY, filename_We)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+  IF (save_data(16)) THEN
+     filename_We = '_NNNN_WZe_eV_2D.bin'
+     filename_We(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_WZ, filename_We)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+! average energy of THERMAL motion along each coordinate direction
+
+  IF (save_data(17)) THEN
+     filename_Te = '_NNNN_TXe_eV_2D.bin'
+     filename_Te(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_TX, filename_Te)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+  IF (save_data(18)) THEN
+     filename_Te = '_NNNN_TYe_eV_2D.bin'
+     filename_Te(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_TY, filename_Te)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+  IF (save_data(19)) THEN
+     filename_Te = '_NNNN_TZe_eV_2D.bin'
+     filename_Te(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_TZ, filename_Te)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+!  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
+
+! write ion moments to files ------------------------------------------
+
+  DO s = 1, N_spec
+
+     CALL COLLECT_ION_MOMENTS(s)
+
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
+
+! number density
+
+     IF (save_data(20)) THEN
+        filename_Ni = '_NNNN_Ni_s_m3_2D.bin'
+        filename_Ni(2:5) = convert_int_to_txt_string(current_snap, 4)
+        filename_Ni(10:10) = convert_int_to_txt_string(s, 1)
+        IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_N, filename_Ni)
+        CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+     END IF
+
+! electric current along each coordinate direction
+
+     IF (save_data(21)) THEN
+        filename_Ji = '_NNNN_JXi_s_Am2_2D.bin'
+        filename_Ji(2:5) = convert_int_to_txt_string(current_snap, 4)
+        filename_Ji(11:11) = convert_int_to_txt_string(s, 1)
+        IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_JX, filename_Ji)
+        CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+     END IF
+
+     IF (save_data(22)) THEN
+        filename_Ji = '_NNNN_JYi_s_Am2_2D.bin'
+        filename_Ji(2:5) = convert_int_to_txt_string(current_snap, 4)
+        filename_Ji(11:11) = convert_int_to_txt_string(s, 1)
+        IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_JY, filename_Ji)
+        CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+     END IF
+
+     IF (save_data(23)) THEN
+        filename_Ji = '_NNNN_JZi_s_Am2_2D.bin'
+        filename_Ji(2:5) = convert_int_to_txt_string(current_snap, 4)
+        filename_Ji(11:11) = convert_int_to_txt_string(s, 1)
+        IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_JZ, filename_Ji)
+        CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+    END IF
+
+! average velocity along each coordinate direction
+
+     IF (save_data(24)) THEN
+        filename_Vi = '_NNNN_VXi_s_ms_2D.bin'
+        filename_Vi(2:5) = convert_int_to_txt_string(current_snap, 4)
+        filename_Vi(11:11) = convert_int_to_txt_string(s, 1)
+        IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_VX, filename_Vi)
+        CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+     END IF
+
+     IF (save_data(25)) THEN
+        filename_Vi = '_NNNN_VYi_s_ms_2D.bin'
+        filename_Vi(2:5) = convert_int_to_txt_string(current_snap, 4)
+        filename_Vi(11:11) = convert_int_to_txt_string(s, 1)
+        IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_VY, filename_Vi)
+        CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+     END IF
+
+     IF (save_data(26)) THEN
+        filename_Vi = '_NNNN_VZi_s_ms_2D.bin'
+        filename_Vi(2:5) = convert_int_to_txt_string(current_snap, 4)
+        filename_Vi(11:11) = convert_int_to_txt_string(s, 1)
+        IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_VZ, filename_Vi)
+        CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+     END IF
+
+! average energy of FULL motion along each coordinate direction
+
+     IF (save_data(27)) THEN
+        filename_Wi = '_NNNN_WXi_s_eV_2D.bin'
+        filename_Wi(2:5) = convert_int_to_txt_string(current_snap, 4)
+        filename_Wi(11:11) = convert_int_to_txt_string(s, 1)
+        IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_WX, filename_Wi)
+        CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+     END IF
+
+     IF (save_data(28)) THEN
+        filename_Wi = '_NNNN_WYi_s_eV_2D.bin'
+        filename_Wi(2:5) = convert_int_to_txt_string(current_snap, 4)
+        filename_Wi(11:11) = convert_int_to_txt_string(s, 1)
+        IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_WY, filename_Wi)
+        CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+     END IF
+
+     IF (save_data(29)) THEN
+        filename_Wi = '_NNNN_WZi_s_eV_2D.bin'
+        filename_Wi(2:5) = convert_int_to_txt_string(current_snap, 4)
+        filename_Wi(11:11) = convert_int_to_txt_string(s, 1)
+        IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_WZ, filename_Wi)
+        CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+     END IF
+
+! average energy of THERMAL motion along each coordinate direction
+
+     IF (save_data(30)) THEN
+        filename_Ti = '_NNNN_TXi_s_eV_2D.bin'
+        filename_Ti(2:5) = convert_int_to_txt_string(current_snap, 4)
+        filename_Ti(11:11) = convert_int_to_txt_string(s, 1)
+        IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_TX, filename_Ti)
+        CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+     END IF
+
+     IF (save_data(31)) THEN
+        filename_Ti = '_NNNN_TYi_s_eV_2D.bin'
+        filename_Ti(2:5) = convert_int_to_txt_string(current_snap, 4)
+        filename_Ti(11:11) = convert_int_to_txt_string(s, 1)
+        IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_TY, filename_Ti)
+        CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+     END IF
+
+     IF (save_data(32)) THEN
+        filename_Ti = '_NNNN_TZi_s_eV_2D.bin'
+        filename_Ti(2:5) = convert_int_to_txt_string(current_snap, 4)
+        filename_Ti(11:11) = convert_int_to_txt_string(s, 1)
+        IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_TZ, filename_Ti)
+        CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+     END IF
+
+!     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
+
+  END DO
+
+! FULL electric current (sum of electron and ion currents) along each coordinate direction
+
+  IF (save_data(4)) THEN
+     filename_Jsum = '_NNNN_JXsum_Am2_2D.bin'
+     filename_Jsum(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_JXsum, filename_Jsum)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+  IF (save_data(5)) THEN
+     filename_Jsum = '_NNNN_JYsum_Am2_2D.bin'
+     filename_Jsum(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_JYsum, filename_Jsum)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+  IF (save_data(6)) THEN
+     filename_Jsum = '_NNNN_JZsum_Am2_2D.bin'
+     filename_Jsum(2:5) = convert_int_to_txt_string(current_snap, 4)
+     IF (cluster_rank_key.EQ.0) CALL SAVE_GLOBAL_2D_ARRAY(cs_JZsum, filename_Jsum)
+     CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+  END IF
+
+! write electron velocity distribution function -----------------------
 
   CALL CALCULATE_ELECTRON_VDF
 
@@ -1127,22 +829,67 @@ SUBROUTINE CREATE_SNAPSHOT
 
   CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
 
-! cleanup
-
-  IF (ALLOCATED(evxdf)) DEALLOCATE(evxdf, STAT=ALLOC_ERR)
-  IF (ALLOCATED(evydf)) DEALLOCATE(evydf, STAT=ALLOC_ERR)
-  IF (ALLOCATED(evzdf)) DEALLOCATE(evzdf, STAT=ALLOC_ERR)
-
-  IF (ALLOCATED(isvxdf)) DEALLOCATE(isvxdf, STAT=ALLOC_ERR)
-  IF (ALLOCATED(isvydf)) DEALLOCATE(isvydf, STAT=ALLOC_ERR)
-  IF (ALLOCATED(isvzdf)) DEALLOCATE(isvzdf, STAT=ALLOC_ERR)
-
   CALL SAVE_ALL_VDF2D
 
   CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
 
-! cleanup
-  IF (ALLOCATED(evxvydf)) DEALLOCATE(evxvydf, STAT=ALLOC_ERR)
+  IF (cluster_rank_key.NE.0) THEN
+
+     DEALLOCATE(cs_N, STAT=ALLOC_ERR)
+     DEALLOCATE(cs_VX, STAT=ALLOC_ERR)
+     DEALLOCATE(cs_VY, STAT=ALLOC_ERR)
+     DEALLOCATE(cs_VZ, STAT=ALLOC_ERR)
+     DEALLOCATE(cs_WX, STAT=ALLOC_ERR)
+     DEALLOCATE(cs_WY, STAT=ALLOC_ERR)
+     DEALLOCATE(cs_WZ, STAT=ALLOC_ERR)
+
+     IF (ALLOCATED(evxdf)) DEALLOCATE(evxdf, STAT=ALLOC_ERR)
+     IF (ALLOCATED(evydf)) DEALLOCATE(evydf, STAT=ALLOC_ERR)
+     IF (ALLOCATED(evzdf)) DEALLOCATE(evzdf, STAT=ALLOC_ERR)
+
+     IF (ALLOCATED(evxvydf)) DEALLOCATE(evxvydf, STAT=ALLOC_ERR)
+
+     IF (ALLOCATED(isvxdf)) DEALLOCATE(isvxdf, STAT=ALLOC_ERR)
+     IF (ALLOCATED(isvydf)) DEALLOCATE(isvydf, STAT=ALLOC_ERR)
+     IF (ALLOCATED(isvzdf)) DEALLOCATE(isvzdf, STAT=ALLOC_ERR)
+
+  ELSE
+
+     DEALLOCATE(cs_phi, STAT = ALLOC_ERR)
+     DEALLOCATE(cs_EX, STAT = ALLOC_ERR)
+     DEALLOCATE(cs_EY, STAT = ALLOC_ERR)
+
+     DEALLOCATE(cs_N, STAT = ALLOC_ERR)
+
+     DEALLOCATE(cs_JX, STAT = ALLOC_ERR)
+     DEALLOCATE(cs_JY, STAT = ALLOC_ERR)
+     DEALLOCATE(cs_JZ, STAT = ALLOC_ERR)
+
+     DEALLOCATE(cs_VX, STAT = ALLOC_ERR)
+     DEALLOCATE(cs_VY, STAT = ALLOC_ERR)
+     DEALLOCATE(cs_VZ, STAT = ALLOC_ERR)
+
+     DEALLOCATE(cs_TX, STAT = ALLOC_ERR)
+     DEALLOCATE(cs_TY, STAT = ALLOC_ERR)
+     DEALLOCATE(cs_TZ, STAT = ALLOC_ERR)
+
+     DEALLOCATE(cs_JXsum, STAT = ALLOC_ERR)
+     DEALLOCATE(cs_JYsum, STAT = ALLOC_ERR)
+     DEALLOCATE(cs_JZsum, STAT = ALLOC_ERR)
+
+     IF (ALLOCATED(evxdf)) DEALLOCATE(evxdf, STAT = ALLOC_ERR)
+     IF (ALLOCATED(evydf)) DEALLOCATE(evydf, STAT = ALLOC_ERR)
+     IF (ALLOCATED(evzdf)) DEALLOCATE(evzdf, STAT = ALLOC_ERR)
+
+     IF (ALLOCATED(evxvydf)) DEALLOCATE(evxvydf, STAT = ALLOC_ERR)
+
+     IF (ALLOCATED(isvxdf)) DEALLOCATE(isvxdf, STAT = ALLOC_ERR)
+     IF (ALLOCATED(isvydf)) DEALLOCATE(isvydf, STAT = ALLOC_ERR)
+     IF (ALLOCATED(isvzdf)) DEALLOCATE(isvzdf, STAT = ALLOC_ERR)
+
+  END IF
+
+  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
 
   CALL SAVE_ELECTRON_PHASE_PLANES
 
@@ -1170,12 +917,12 @@ SUBROUTINE CREATE_SNAPSHOT
      DO n = 1, N_neutral_spec
         IF (ALLOCATED(diagnostics_neutral(n)%activated_collision)) THEN
            DO p = 1, collision_e_neutral(n)%N_of_activated_colproc
-              IF (ALLOCATED(diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local)) DEALLOCATE(diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local, STAT=ALLOC_ERR)
+              IF (ALLOCATED(diagnostics_neutral(n)%activated_collision(p)%counter_local)) DEALLOCATE(diagnostics_neutral(n)%activated_collision(p)%counter_local, STAT=ALLOC_ERR)
            END DO
-!           DEALLOCATE(diagnostics_neutral(n)%activated_collision, STAT=ALLOC_ERR)
+           DEALLOCATE(diagnostics_neutral(n)%activated_collision, STAT=ALLOC_ERR)
         END IF
      END DO
-!     DEALLOCATE(diagnostics_neutral, STAT=ALLOC_ERR)
+     DEALLOCATE(diagnostics_neutral, STAT=ALLOC_ERR)
   END IF
 
   IF (current_snap.GT.N_of_all_snaps) RETURN
@@ -1187,15 +934,15 @@ SUBROUTINE CREATE_SNAPSHOT
 ! (c) if the next snapshot saves the ionization rate
 ! (d) if the ionization collisions are on
 
-!  ALLOCATE(diagnostics_neutral(1:N_neutral_spec), STAT = ALLOC_ERR)
+  ALLOCATE(diagnostics_neutral(1:N_neutral_spec), STAT = ALLOC_ERR)
   DO n = 1, N_neutral_spec
      IF (collision_e_neutral(n)%N_of_activated_colproc.LE.0) CYCLE
-!     ALLOCATE(diagnostics_neutral(n)%activated_collision(1:collision_e_neutral(n)%N_of_activated_colproc), STAT = ALLOC_ERR)
+     ALLOCATE(diagnostics_neutral(n)%activated_collision(1:collision_e_neutral(n)%N_of_activated_colproc), STAT = ALLOC_ERR)
      DO p = 1, collision_e_neutral(n)%N_of_activated_colproc
 ! presently do ionization collisions only
         IF (collision_e_neutral(n)%colproc_info(p)%type.LT.30) CYCLE
-        ALLOCATE(diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
-        diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local = 0.0
+        ALLOCATE(diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+        diagnostics_neutral(n)%activated_collision(p)%counter_local = 0.0
      END DO
   END DO
 
@@ -2069,13 +1816,13 @@ SUBROUTINE SAVE_en_COLLISIONS_2D
 
            IF (Rank_horizontal_right.GE.0) THEN
 ! ## 1 ## send right densities in the right edge
-              rbufer(1:n1) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max, c_indx_y_min:c_indx_y_max)
+              rbufer(1:n1) = diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max, c_indx_y_min:c_indx_y_max)
               CALL MPI_SEND(rbufer, n1, MPI_REAL, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
            END IF
 
            IF (Rank_horizontal_left.GE.0) THEN
 ! ## 2 ## send left densities in the left edge
-              rbufer(1:n1) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min, c_indx_y_min:c_indx_y_max)
+              rbufer(1:n1) = diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min, c_indx_y_min:c_indx_y_max)
               CALL MPI_SEND(rbufer, n1, MPI_REAL, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
            END IF
 
@@ -2083,7 +1830,7 @@ SUBROUTINE SAVE_en_COLLISIONS_2D
 ! ## 3 ## receive from left densities in the vertical line next to the left edge
               CALL MPI_RECV(rbufer, n1, MPI_REAL, Rank_horizontal_left, Rank_horizontal_left, COMM_HORIZONTAL, stattus, ierr)
               DO j = c_indx_y_min, c_indx_y_max
-                 diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min+1, j) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min+1, j) + rbufer(j-c_indx_y_min+1)
+                 diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min+1, j) = diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min+1, j) + rbufer(j-c_indx_y_min+1)
               END DO
            END IF
 
@@ -2091,7 +1838,7 @@ SUBROUTINE SAVE_en_COLLISIONS_2D
 ! ## 4 ## receive from right densities in the vertical line next to the right edge
               CALL MPI_RECV(rbufer, n1, MPI_REAL, Rank_horizontal_right, Rank_horizontal_right, COMM_HORIZONTAL, stattus, ierr)
               DO j = c_indx_y_min, c_indx_y_max
-                 diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max-1, j) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max-1, j) + rbufer(j-c_indx_y_min+1)
+                 diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max-1, j) = diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max-1, j) + rbufer(j-c_indx_y_min+1)
               END DO
            END IF
 
@@ -2100,13 +1847,13 @@ SUBROUTINE SAVE_en_COLLISIONS_2D
 
            IF (Rank_horizontal_above.GE.0) THEN
 ! ## 5 ## send up densities in the top edge
-              rbufer(1:n3) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min:c_indx_x_max, c_indx_y_max)
+              rbufer(1:n3) = diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min:c_indx_x_max, c_indx_y_max)
               CALL MPI_SEND(rbufer, n3, MPI_REAL, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
            END IF
 
            IF (Rank_horizontal_below.GE.0) THEN
 ! ## 6 ## send down densities in the bottom edge
-              rbufer(1:n3) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min:c_indx_x_max, c_indx_y_min)
+              rbufer(1:n3) = diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min:c_indx_x_max, c_indx_y_min)
               CALL MPI_SEND(rbufer, n3, MPI_REAL, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
            END IF
 
@@ -2114,7 +1861,7 @@ SUBROUTINE SAVE_en_COLLISIONS_2D
 ! ## 7 ## receive from below densities in the vertical line above the bottom line
               CALL MPI_RECV(rbufer, n3, MPI_REAL, Rank_horizontal_below, Rank_horizontal_below, COMM_HORIZONTAL, stattus, ierr)
               DO i = c_indx_x_min, c_indx_x_max
-                 diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(i, c_indx_y_min+1) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(i, c_indx_y_min+1) + rbufer(i-c_indx_x_min+1)
+                 diagnostics_neutral(n)%activated_collision(p)%counter_local(i, c_indx_y_min+1) = diagnostics_neutral(n)%activated_collision(p)%counter_local(i, c_indx_y_min+1) + rbufer(i-c_indx_x_min+1)
               END DO
            END IF
 
@@ -2122,7 +1869,7 @@ SUBROUTINE SAVE_en_COLLISIONS_2D
 ! ## 8 ## receive from above densities in the vertical line under the top line
               CALL MPI_RECV(rbufer, n3, MPI_REAL, Rank_horizontal_above, Rank_horizontal_above, COMM_HORIZONTAL, stattus, ierr)
               DO i = c_indx_x_min, c_indx_x_max
-                 diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(i, c_indx_y_max-1) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(i, c_indx_y_max-1) + rbufer(i-c_indx_x_min+1)
+                 diagnostics_neutral(n)%activated_collision(p)%counter_local(i, c_indx_y_max-1) = diagnostics_neutral(n)%activated_collision(p)%counter_local(i, c_indx_y_max-1) + rbufer(i-c_indx_x_min+1)
               END DO
            END IF
 
@@ -2136,7 +1883,7 @@ SUBROUTINE SAVE_en_COLLISIONS_2D
 ! ## 1 ## receive from left densities in the vertical line next to the left edge
               CALL MPI_RECV(rbufer, n1, MPI_REAL, Rank_horizontal_left, Rank_horizontal_left, COMM_HORIZONTAL, stattus, ierr)
               DO j = c_indx_y_min, c_indx_y_max
-                 diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min+1, j) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min+1, j) + rbufer(j-c_indx_y_min+1)
+                 diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min+1, j) = diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min+1, j) + rbufer(j-c_indx_y_min+1)
               END DO
            END IF
 
@@ -2144,19 +1891,19 @@ SUBROUTINE SAVE_en_COLLISIONS_2D
 ! ## 2 ## receive from right densities in the vertical line next to the right edge
               CALL MPI_RECV(rbufer, n1, MPI_REAL, Rank_horizontal_right, Rank_horizontal_right, COMM_HORIZONTAL, stattus, ierr)
               DO j = c_indx_y_min, c_indx_y_max
-                 diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max-1, j) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max-1, j) + rbufer(j-c_indx_y_min+1)
+                 diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max-1, j) = diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max-1, j) + rbufer(j-c_indx_y_min+1)
               END DO
            END IF
 
            IF (Rank_horizontal_right.GE.0) THEN
 ! ## 3 ## send right densities in the right edge
-              rbufer(1:n1) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max, c_indx_y_min:c_indx_y_max)
+              rbufer(1:n1) = diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max, c_indx_y_min:c_indx_y_max)
               CALL MPI_SEND(rbufer, n1, MPI_REAL, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
            END IF
 
            IF (Rank_horizontal_left.GE.0) THEN
 ! ## 4 ## send left densities in the left edge
-              rbufer(1:n1) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min, c_indx_y_min:c_indx_y_max)
+              rbufer(1:n1) = diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min, c_indx_y_min:c_indx_y_max)
               CALL MPI_SEND(rbufer, n1, MPI_REAL, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
            END IF
 
@@ -2167,7 +1914,7 @@ SUBROUTINE SAVE_en_COLLISIONS_2D
 ! ## 5 ## receive from below densities in the vertical line above the bottom line
               CALL MPI_RECV(rbufer, n3, MPI_REAL, Rank_horizontal_below, Rank_horizontal_below, COMM_HORIZONTAL, stattus, ierr)
               DO i = c_indx_x_min, c_indx_x_max
-                 diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(i, c_indx_y_min+1) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(i, c_indx_y_min+1) + rbufer(i-c_indx_x_min+1)
+                 diagnostics_neutral(n)%activated_collision(p)%counter_local(i, c_indx_y_min+1) = diagnostics_neutral(n)%activated_collision(p)%counter_local(i, c_indx_y_min+1) + rbufer(i-c_indx_x_min+1)
               END DO
            END IF
 
@@ -2175,19 +1922,19 @@ SUBROUTINE SAVE_en_COLLISIONS_2D
 ! ## 6 ## receive from above densities in the vertical line under the top line
               CALL MPI_RECV(rbufer, n3, MPI_REAL, Rank_horizontal_above, Rank_horizontal_above, COMM_HORIZONTAL, stattus, ierr)
               DO i = c_indx_x_min, c_indx_x_max
-                 diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(i, c_indx_y_max-1) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(i, c_indx_y_max-1) + rbufer(i-c_indx_x_min+1)
+                 diagnostics_neutral(n)%activated_collision(p)%counter_local(i, c_indx_y_max-1) = diagnostics_neutral(n)%activated_collision(p)%counter_local(i, c_indx_y_max-1) + rbufer(i-c_indx_x_min+1)
               END DO
            END IF
 
            IF (Rank_horizontal_above.GE.0) THEN
 ! ## 7 ## send up densities in the top edge
-              rbufer(1:n3) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min:c_indx_x_max, c_indx_y_max)
+              rbufer(1:n3) = diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min:c_indx_x_max, c_indx_y_max)
               CALL MPI_SEND(rbufer, n3, MPI_REAL, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
            END IF
 
            IF (Rank_horizontal_below.GE.0) THEN
 ! ## 8 ## send down densities in the bottom edge
-              rbufer(1:n3) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min:c_indx_x_max, c_indx_y_min)
+              rbufer(1:n3) = diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min:c_indx_x_max, c_indx_y_min)
               CALL MPI_SEND(rbufer, n3, MPI_REAL, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
            END IF
 
@@ -2197,62 +1944,62 @@ SUBROUTINE SAVE_en_COLLISIONS_2D
 
         IF (Rank_of_master_left.LT.0) THEN
            DO j = c_indx_y_min+1, c_indx_y_max-1
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min, j) = 2.0 * diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min, j)
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min, j) = 2.0 * diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min, j)
            END DO
         END IF
 
         IF (Rank_of_master_right.LT.0) THEN
            DO j = c_indx_y_min+1, c_indx_y_max-1
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max, j) = 2.0 * diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max, j)
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max, j) = 2.0 * diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max, j)
            END DO
         END IF
   
         IF (Rank_of_master_above.LT.0) THEN
            DO i = c_indx_x_min+1, c_indx_x_max-1
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(i, c_indx_y_max) = 2.0 * diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(i, c_indx_y_max)
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(i, c_indx_y_max) = 2.0 * diagnostics_neutral(n)%activated_collision(p)%counter_local(i, c_indx_y_max)
            END DO
         END IF
   
         IF (Rank_of_master_below.LT.0) THEN
            DO i = c_indx_x_min+1, c_indx_x_max-1
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(i, c_indx_y_min) = 2.0 * diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(i, c_indx_y_min)
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(i, c_indx_y_min) = 2.0 * diagnostics_neutral(n)%activated_collision(p)%counter_local(i, c_indx_y_min)
            END DO
         END IF
 
         SELECT CASE (c_left_bottom_corner_type)
            CASE (SURROUNDED_BY_WALL)
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min, c_indx_y_min) = 4.0 * diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min, c_indx_y_min) 
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min, c_indx_y_min) = 4.0 * diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min, c_indx_y_min) 
            CASE (EMPTY_CORNER_WALL_LEFT)
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min, c_indx_y_min+1) = 0.66666666666666 * diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min, c_indx_y_min+1)    ! 2*2/3=4/3=1/(3/4)
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min, c_indx_y_min+1) = 0.66666666666666 * diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min, c_indx_y_min+1)    ! 2*2/3=4/3=1/(3/4)
            CASE (EMPTY_CORNER_WALL_BELOW)
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min+1, c_indx_y_min) = 0.66666666666666 * diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min+1, c_indx_y_min)    ! 2*2/3=4/3=1/(3/4)
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min+1, c_indx_y_min) = 0.66666666666666 * diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min+1, c_indx_y_min)    ! 2*2/3=4/3=1/(3/4)
         END SELECT
      
         SELECT CASE (c_left_top_corner_type)
            CASE (SURROUNDED_BY_WALL)
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min, c_indx_y_max) = 4.0 * diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min, c_indx_y_max) 
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min, c_indx_y_max) = 4.0 * diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min, c_indx_y_max) 
            CASE (EMPTY_CORNER_WALL_LEFT)
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min, c_indx_y_max-1) = 0.66666666666666 * diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min, c_indx_y_max-1)    ! 2*2/3=4/3=1/(3/4)
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min, c_indx_y_max-1) = 0.66666666666666 * diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min, c_indx_y_max-1)    ! 2*2/3=4/3=1/(3/4)
            CASE (EMPTY_CORNER_WALL_ABOVE)
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min+1, c_indx_y_max) = 0.66666666666666 * diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_min+1, c_indx_y_max)    ! 2*2/3=4/3=1/(3/4)
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min+1, c_indx_y_max) = 0.66666666666666 * diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_min+1, c_indx_y_max)    ! 2*2/3=4/3=1/(3/4)
         END SELECT
 
         SELECT CASE (c_right_bottom_corner_type)
            CASE (SURROUNDED_BY_WALL)
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max, c_indx_y_min) = 4.0 * diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max, c_indx_y_min) 
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max, c_indx_y_min) = 4.0 * diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max, c_indx_y_min) 
            CASE (EMPTY_CORNER_WALL_RIGHT)
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max, c_indx_y_min+1) = 0.66666666666666 * diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max, c_indx_y_min+1)    ! 2*2/3=4/3=1/(3/4)
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max, c_indx_y_min+1) = 0.66666666666666 * diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max, c_indx_y_min+1)    ! 2*2/3=4/3=1/(3/4)
            CASE (EMPTY_CORNER_WALL_BELOW)
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max-1, c_indx_y_min) = 0.66666666666666 * diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max-1, c_indx_y_min)    ! 2*2/3=4/3=1/(3/4)
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max-1, c_indx_y_min) = 0.66666666666666 * diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max-1, c_indx_y_min)    ! 2*2/3=4/3=1/(3/4)
         END SELECT
      
         SELECT CASE (c_right_top_corner_type)
            CASE (SURROUNDED_BY_WALL)
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max, c_indx_y_max) = 4.0 * diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max, c_indx_y_max) 
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max, c_indx_y_max) = 4.0 * diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max, c_indx_y_max) 
            CASE (EMPTY_CORNER_WALL_RIGHT)
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max, c_indx_y_max-1) = 0.66666666666666 * diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max, c_indx_y_max-1)    ! 2*2/3=4/3=1/(3/4)
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max, c_indx_y_max-1) = 0.66666666666666 * diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max, c_indx_y_max-1)    ! 2*2/3=4/3=1/(3/4)
            CASE (EMPTY_CORNER_WALL_ABOVE)
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max-1, c_indx_y_max) = 0.66666666666666 * diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(c_indx_x_max-1, c_indx_y_max)    ! 2*2/3=4/3=1/(3/4)
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max-1, c_indx_y_max) = 0.66666666666666 * diagnostics_neutral(n)%activated_collision(p)%counter_local(c_indx_x_max-1, c_indx_y_max)    ! 2*2/3=4/3=1/(3/4)
         END SELECT
 
         filename = '_NNNN_neutral_AAAAAA_coll_id_NN_i_NN.bin'
@@ -2263,14 +2010,14 @@ SUBROUTINE SAVE_en_COLLISIONS_2D
 
         DO j = c_indx_y_min, c_indx_y_max
            DO i = c_indx_x_min, c_indx_x_max
-              diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(i,j) = diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local(i,j) * conversion_factor_m3s
+              diagnostics_neutral(n)%activated_collision(p)%counter_local(i,j) = diagnostics_neutral(n)%activated_collision(p)%counter_local(i,j) * conversion_factor_m3s
            END DO
         END DO
 
-        CALL SAVE_GLOBAL_2D_ARRAY(diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local, filename)
+        CALL SAVE_GLOBAL_2D_ARRAY(diagnostics_neutral(n)%activated_collision(p)%counter_local, filename)
 
 ! complete cleanup (deallocate + zeroing) is performed in the end of CREATE_SNAPSHOT
-!        diagnostics_neutral(n)%activated_collision(p)%ionization_rate_local = 0.0
+!        diagnostics_neutral(n)%activated_collision(p)%counter_local = 0.0
 
         IF (Rank_of_process.EQ.0) PRINT '("created file ",A40)', filename
 

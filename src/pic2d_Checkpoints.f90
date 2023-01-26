@@ -7,14 +7,13 @@ SUBROUTINE SAVE_CHECKPOINT_MPIIO_2(n_sub)
   USE ParallelOperationValues
   USE CurrentProblemValues
   USE LoadBalancing, ONLY : T_cntr_global_load_balance, T_cntr_cluster_load_balance
-  USE Diagnostics, ONLY : Save_probes_e_data_T_cntr, N_of_saved_records
+  USE Diagnostics, ONLY : Save_probes_data_T_cntr, N_of_saved_records
   USE Snapshots, ONLY : current_snap
   USE ElectronParticles
   USE IonParticles
   USE Checkpoints
   USE ClusterAndItsBoundaries, ONLY : c_local_object_part, c_N_of_local_object_parts
   USE SetupValues, ONLY : total_cathode_N_e_to_inject
-  USE ExternalCircuit
 
   USE rng_wrapper
 
@@ -28,7 +27,7 @@ SUBROUTINE SAVE_CHECKPOINT_MPIIO_2(n_sub)
 
   INTEGER, INTENT(IN) :: n_sub
 
-  INTEGER*4 state_ind, func, state_var(624)
+  INTEGER*4 state_ind, func, state_var(624) ! RNG 
 
   INTEGER ibufer_length
   INTEGER, ALLOCATABLE :: ibufer(:)
@@ -49,6 +48,7 @@ SUBROUTINE SAVE_CHECKPOINT_MPIIO_2(n_sub)
   INTEGER, PARAMETER :: maxNsend=100000
   INTEGER Nsend
 
+  
   CHARACTER(21) filename_report        ! report_TTTTTTTT.write
                                        ! ----x----I----x----I-
 
@@ -85,7 +85,7 @@ SUBROUTINE SAVE_CHECKPOINT_MPIIO_2(n_sub)
   ibufer(627) = T_cntr
   ibufer(628) = T_cntr_global_load_balance
   ibufer(629) = T_cntr_cluster_load_balance
-  ibufer(630) = Save_probes_e_data_T_cntr
+  ibufer(630) = Save_probes_data_T_cntr
   ibufer(631) = N_of_saved_records
   ibufer(632) = current_snap
   ibufer(633) = particle_master
@@ -135,11 +135,6 @@ SUBROUTINE SAVE_CHECKPOINT_MPIIO_2(n_sub)
      END IF
   END IF
 
-! include potentials and charges (full,plasma) of 
-  IF (Rank_of_process.EQ.0) THEN
-     len_surf_charge = len_surf_charge + 3 * N_of_object_potentials_to_solve
-  END IF
-
   ibufer(pos) = len_surf_charge
 
   ALLOCATE(rbufer(1:MAX(1,len_surf_charge)), STAT = ALLOC_ERR)
@@ -180,18 +175,6 @@ SUBROUTINE SAVE_CHECKPOINT_MPIIO_2(n_sub)
      END IF
   END IF
 
-  IF ((Rank_of_process.EQ.0).AND.(N_of_object_potentials_to_solve.GT.0)) THEN
-     pos = pos2 + 1
-     pos2 = pos2 + N_of_object_potentials_to_solve
-     rbufer(pos:pos2) = potential_of_object(1:N_of_object_potentials_to_solve)
-     pos = pos2 + 1
-     pos2 = pos2 + N_of_object_potentials_to_solve
-     rbufer(pos:pos2) = charge_of_object(1:N_of_object_potentials_to_solve)
-     pos = pos2 + 1
-     pos2 = pos2 + N_of_object_potentials_to_solve
-     rbufer(pos:pos2) = dQ_plasma_of_object(1:N_of_object_potentials_to_solve)
-  END IF
-
   CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
 
 ! save everything into a single binary file 
@@ -212,7 +195,8 @@ SUBROUTINE SAVE_CHECKPOINT_MPIIO_2(n_sub)
 !###???  CALL MPI_FILE_WRITE_ORDERED( file_handle, rbufer(1:len_surf_charge), len_surf_charge, MPI_DOUBLE_PRECISION, stattus, ierr )
   CALL MPI_FILE_WRITE_ORDERED( file_handle, rbufer, len_surf_charge, MPI_DOUBLE_PRECISION, stattus, ierr )
 
-  bufsize = 5 * N_electrons
+!  bufsize = 5 * N_electrons
+  bufsize = 8 * N_electrons
   ALLOCATE(dbufer(1:MAX(1,bufsize)), STAT = ALLOC_ERR)
   pos = 1
   DO k = 1, N_electrons
@@ -221,7 +205,10 @@ SUBROUTINE SAVE_CHECKPOINT_MPIIO_2(n_sub)
      dbufer(pos+2) = electron(k)%VX
      dbufer(pos+3) = electron(k)%VY
      dbufer(pos+4) = electron(k)%VZ
-     pos = pos + 5
+     dbufer(pos+5) = electron(k)%AX
+     dbufer(pos+6) = electron(k)%AY
+     dbufer(pos+7) = electron(k)%AZ
+     pos = pos + 8
   END DO
 
   CALL MPI_FILE_WRITE_ORDERED( file_handle, dbufer, bufsize, MPI_DOUBLE_PRECISION, stattus, ierr )
@@ -236,7 +223,8 @@ SUBROUTINE SAVE_CHECKPOINT_MPIIO_2(n_sub)
 
   DO s = 1, N_spec
 
-     bufsize = 5 * N_ions(s)
+!     bufsize = 5 * N_ions(s)
+     bufsize = 7 * N_ions(s)
      IF (ALLOCATED(dbufer)) DEALLOCATE(dbufer, STAT = ALLOC_ERR)
      ALLOCATE(dbufer(1:MAX(1,bufsize)), STAT = ALLOC_ERR)
 
@@ -247,7 +235,10 @@ SUBROUTINE SAVE_CHECKPOINT_MPIIO_2(n_sub)
         dbufer(pos+2) = ion(s)%part(k)%VX
         dbufer(pos+3) = ion(s)%part(k)%VY
         dbufer(pos+4) = ion(s)%part(k)%VZ
-        pos = pos + 5
+
+        dbufer(pos+5) = ion(s)%part(k)%AX
+        dbufer(pos+6) = ion(s)%part(k)%AY
+        pos = pos + 7
      END DO
 
      CALL MPI_FILE_WRITE_ORDERED( file_handle, dbufer, bufsize, MPI_DOUBLE_PRECISION, stattus, ierr )
@@ -357,7 +348,6 @@ SUBROUTINE READ_CHECKPOINT_MPIIO_2
   USE Checkpoints
   USE ClusterAndItsBoundaries, ONLY : c_local_object_part, c_N_of_local_object_parts
   USE SetupValues, ONLY : total_cathode_N_e_to_inject
-  USE ExternalCircuit
 
   USE rng_wrapper
 
@@ -449,7 +439,7 @@ SUBROUTINE READ_CHECKPOINT_MPIIO_2
   Start_T_cntr                  = ibufer(627) != T_cntr
   T_cntr_global_load_balance    = ibufer(628) != T_cntr_global_load_balance
   T_cntr_cluster_load_balance   = ibufer(629) != T_cntr_cluster_load_balance
-  Save_probes_data_T_cntr_check = ibufer(630) != Save_probes_e_data_T_cntr
+  Save_probes_data_T_cntr_check = ibufer(630) != Save_probes_data_T_cntr
   N_of_saved_records_check      = ibufer(631) != N_of_saved_records
   current_snap_check            = ibufer(632) != current_snap
   particle_master               = ibufer(633) != particle_master
@@ -515,21 +505,10 @@ SUBROUTINE READ_CHECKPOINT_MPIIO_2
            END IF
         END DO
      END IF
-  END IF
+ END IF
 
-  IF ((Rank_of_process.EQ.0).AND.(N_of_object_potentials_to_solve.GT.0)) THEN
-     pos = pos2 + 1
-     pos2 = pos2 + N_of_object_potentials_to_solve
-     potential_of_object(1:N_of_object_potentials_to_solve) = rbufer(pos:pos2)
-     pos = pos2 + 1
-     pos2 = pos2 + N_of_object_potentials_to_solve
-     charge_of_object(1:N_of_object_potentials_to_solve) = rbufer(pos:pos2)
-     pos = pos2 + 1
-     pos2 = pos2 + N_of_object_potentials_to_solve
-     dQ_plasma_of_object(1:N_of_object_potentials_to_solve) = rbufer(pos:pos2)
-  END IF
-
-  bufsize = 5 * N_electrons
+!  bufsize = 5 * N_electrons
+  bufsize = 8 * N_electrons
   ALLOCATE(dbufer(1:MAX(1,bufsize)), STAT = ALLOC_ERR)
 
   CALL MPI_FILE_READ_ORDERED( file_handle, dbufer, bufsize, MPI_DOUBLE_PRECISION, stattus, ierr )
@@ -540,8 +519,11 @@ SUBROUTINE READ_CHECKPOINT_MPIIO_2
      electron(k)%Y  = dbufer(pos+1) 
      electron(k)%VX = dbufer(pos+2) 
      electron(k)%VY = dbufer(pos+3) 
-     electron(k)%VZ = dbufer(pos+4) 
-     pos = pos + 5
+     electron(k)%VZ = dbufer(pos+4)
+     electron(k)%AX = dbufer(pos+5)
+     electron(k)%AY = dbufer(pos+6)
+     electron(k)%AZ = dbufer(pos+7) 
+     pos = pos + 8
   END DO
 
   bufsize = N_electrons
@@ -555,7 +537,8 @@ SUBROUTINE READ_CHECKPOINT_MPIIO_2
 
   DO s = 1, N_spec
 
-     bufsize = 5 * N_ions(s)
+!     bufsize = 5 * N_ions(s)
+     bufsize = 7 * N_ions(s)
      IF (ALLOCATED(dbufer)) DEALLOCATE(dbufer, STAT = ALLOC_ERR)
      ALLOCATE(dbufer(1:MAX(1,bufsize)), STAT = ALLOC_ERR)
 
@@ -568,7 +551,10 @@ SUBROUTINE READ_CHECKPOINT_MPIIO_2
         ion(s)%part(k)%VX = dbufer(pos+2)
         ion(s)%part(k)%VY = dbufer(pos+3)
         ion(s)%part(k)%VZ = dbufer(pos+4)
-        pos = pos + 5
+
+        ion(s)%part(k)%AX = dbufer(pos+5)
+        ion(s)%part(k)%AY = dbufer(pos+6)
+        pos = pos + 7
      END DO
 
      bufsize = N_ions(s)
@@ -685,7 +671,7 @@ SUBROUTINE ADJUST_T_CNTR_SAVE_CHECKPOINT
      IF (Tcntr_snapshot(n).GE.T_cntr_save_checkpoint) THEN
         IF (.NOT.save_ionization_rates_2d(n)) RETURN
 ! if the snapshot saves ionization rates, move checkpoint save to the timestep following the last ion advance before the snapshot save
-        T_cntr_save_checkpoint = N_subcycles * (Tcntr_snapshot(n) / N_subcycles)
+        T_cntr_save_checkpoint = (2*N_subcycles) * (Tcntr_snapshot(n) / (2*N_subcycles) ) ! factor 2 added 11/16/22
         IF (T_cntr_save_checkpoint.NE.T_cntr_save_checkpoint_old) THEN
            IF (Rank_of_process.EQ.0) PRINT '("### ADJUST_T_CNTR_SAVE_CHECKPOINT :: changed T_cntr_save_checkpoint from ",i9," : to ",i9," ###")', &
                 & T_cntr_save_checkpoint_old, T_cntr_save_checkpoint
@@ -704,14 +690,13 @@ SUBROUTINE SAVE_CHECKPOINT_POSIX(n_sub)
   USE ParallelOperationValues
   USE CurrentProblemValues
   USE LoadBalancing, ONLY : T_cntr_global_load_balance, T_cntr_cluster_load_balance
-  USE Diagnostics, ONLY : Save_probes_e_data_T_cntr, N_of_saved_records
+  USE Diagnostics, ONLY : Save_probes_data_T_cntr, N_of_saved_records
   USE Snapshots, ONLY : current_snap
   USE ElectronParticles
   USE IonParticles
   USE Checkpoints
   USE ClusterAndItsBoundaries, ONLY : c_local_object_part, c_N_of_local_object_parts
   USE SetupValues, ONLY : total_cathode_N_e_to_inject
-  USE ExternalCircuit
 
   USE rng_wrapper
 
@@ -767,7 +752,7 @@ SUBROUTINE SAVE_CHECKPOINT_POSIX(n_sub)
   ibufer(627) = T_cntr
   ibufer(628) = T_cntr_global_load_balance
   ibufer(629) = T_cntr_cluster_load_balance
-  ibufer(630) = Save_probes_e_data_T_cntr
+  ibufer(630) = Save_probes_data_T_cntr
   ibufer(631) = N_of_saved_records
   ibufer(632) = current_snap
   ibufer(633) = particle_master
@@ -815,11 +800,6 @@ SUBROUTINE SAVE_CHECKPOINT_POSIX(n_sub)
      END IF
   END IF
 
-! include potentials and charges (full,plasma) of 
-  IF (Rank_of_process.EQ.0) THEN
-     len_surf_charge = len_surf_charge + 3 * N_of_object_potentials_to_solve
-  END IF
-
   ibufer(pos) = len_surf_charge
 
   ALLOCATE(rbufer(1:MAX(1,len_surf_charge)), STAT = ALLOC_ERR)
@@ -860,18 +840,6 @@ SUBROUTINE SAVE_CHECKPOINT_POSIX(n_sub)
      END IF
   END IF
 
-  IF ((Rank_of_process.EQ.0).AND.(N_of_object_potentials_to_solve.GT.0)) THEN
-     pos = pos2 + 1
-     pos2 = pos2 + N_of_object_potentials_to_solve
-     rbufer(pos:pos2) = potential_of_object(1:N_of_object_potentials_to_solve)
-     pos = pos2 + 1
-     pos2 = pos2 + N_of_object_potentials_to_solve
-     rbufer(pos:pos2) = charge_of_object(1:N_of_object_potentials_to_solve)
-     pos = pos2 + 1
-     pos2 = pos2 + N_of_object_potentials_to_solve
-     rbufer(pos:pos2) = dQ_plasma_of_object(1:N_of_object_potentials_to_solve)
-  END IF
-
 ! each process saves everything into its own binary file 
 
 ! create filename
@@ -897,6 +865,9 @@ SUBROUTINE SAVE_CHECKPOINT_POSIX(n_sub)
      WRITE (19) electron(k)%VX
      WRITE (19) electron(k)%VY
      WRITE (19) electron(k)%VZ
+     WRITE (19) electron(k)%AX
+     WRITE (19) electron(k)%AY
+     WRITE (19) electron(k)%AZ
      WRITE (19) electron(k)%tag
   END DO
 
@@ -907,6 +878,9 @@ SUBROUTINE SAVE_CHECKPOINT_POSIX(n_sub)
         WRITE (19) ion(s)%part(k)%VX
         WRITE (19) ion(s)%part(k)%VY
         WRITE (19) ion(s)%part(k)%VZ
+
+        WRITE (19) ion(s)%part(k)%AX
+        WRITE (19) ion(s)%part(k)%AY
         WRITE (19) ion(s)%part(k)%tag
      END DO
   END DO
@@ -935,7 +909,6 @@ SUBROUTINE READ_CHECKPOINT_POSIX
   USE Checkpoints
   USE ClusterAndItsBoundaries, ONLY : c_local_object_part, c_N_of_local_object_parts
   USE SetupValues, ONLY : total_cathode_N_e_to_inject
-  USE ExternalCircuit
 
   USE rng_wrapper
 
@@ -1011,7 +984,7 @@ SUBROUTINE READ_CHECKPOINT_POSIX
   Start_T_cntr                  = ibufer(627) != T_cntr
   T_cntr_global_load_balance    = ibufer(628) != T_cntr_global_load_balance
   T_cntr_cluster_load_balance   = ibufer(629) != T_cntr_cluster_load_balance
-  Save_probes_data_T_cntr_check = ibufer(630) != Save_probes_e_data_T_cntr
+  Save_probes_data_T_cntr_check = ibufer(630) != Save_probes_data_T_cntr
   N_of_saved_records_check      = ibufer(631) != N_of_saved_records
   current_snap_check            = ibufer(632) != current_snap
   particle_master               = ibufer(633) != particle_master
@@ -1073,18 +1046,6 @@ SUBROUTINE READ_CHECKPOINT_POSIX
      END IF
   END IF
 
-  IF ((Rank_of_process.EQ.0).AND.(N_of_object_potentials_to_solve.GT.0)) THEN
-     pos = pos2 + 1
-     pos2 = pos2 + N_of_object_potentials_to_solve
-     potential_of_object(1:N_of_object_potentials_to_solve) = rbufer(pos:pos2)
-     pos = pos2 + 1
-     pos2 = pos2 + N_of_object_potentials_to_solve
-     charge_of_object(1:N_of_object_potentials_to_solve) = rbufer(pos:pos2)
-     pos = pos2 + 1
-     pos2 = pos2 + N_of_object_potentials_to_solve
-     dQ_plasma_of_object(1:N_of_object_potentials_to_solve) = rbufer(pos:pos2)
-  END IF
-
   ALLOCATE(electron(1:max_N_electrons), STAT=ALLOC_ERR)
 
   DO k = 1, N_electrons
@@ -1093,6 +1054,9 @@ SUBROUTINE READ_CHECKPOINT_POSIX
      READ (19) electron(k)%VX
      READ (19) electron(k)%VY
      READ (19) electron(k)%VZ
+     READ (19) electron(k)%AX
+     READ (19) electron(k)%AY
+     READ (19) electron(k)%AZ
      READ (19) electron(k)%tag
   END DO
 
@@ -1108,6 +1072,9 @@ SUBROUTINE READ_CHECKPOINT_POSIX
         READ (19) ion(s)%part(k)%VX
         READ (19) ion(s)%part(k)%VY
         READ (19) ion(s)%part(k)%VZ
+
+        READ (19) ion(s)%part(k)%AX
+        READ (19) ion(s)%part(k)%AY
         READ (19) ion(s)%part(k)%tag
      END DO
   END DO

@@ -20,7 +20,7 @@ SUBROUTINE PREPARE_SETUP_VALUES
 
   REAL(8) Te_normal_constant_emit_eV
   REAL(8) Te_parallel_constant_emit_eV
-  REAL(8) We_beam_constant_emit_eV
+  REAL(8) We_beam_constant_emit_eV, sgn
 
   INTEGER save_collided_ions_flag
   INTEGER save_collided_electrons_flag
@@ -58,9 +58,6 @@ SUBROUTINE PREPARE_SETUP_VALUES
      e_colls_with_bo(n)%N_of_saved_parts = 0
 
      whole_object(n)%use_waveform = .FALSE.
-     whole_object(n)%use_amplitude_profile = .FALSE.
-
-     whole_object(n)%potential_must_be_solved = .FALSE.
 
      initbo_filename = 'init_bo_NN.dat'
      initbo_filename(9:10) = convert_int_to_txt_string(n, 2)
@@ -138,11 +135,7 @@ SUBROUTINE PREPARE_SETUP_VALUES
   END DO    !###   DO n = 1, N_of_boundary_and_inner_objects
 
   CALL PREPARE_WAVEFORMS
-
-  CALL PREPARE_OSCILLATIONS_AMPLITUDE_PROFILE
-
-  CALL PREPARE_EXTERNAL_CIRCUIT
-
+  
 END SUBROUTINE PREPARE_SETUP_VALUES
 
 !--------------------------------------------
@@ -240,7 +233,7 @@ SUBROUTINE PREPARE_WAVEFORMS
 ! enforce the ends
      whole_object(n)%wf_T_cntr(1) = 0
      whole_object(n)%wf_T_cntr(whole_object(n)%N_wf_points) = wf_period
-!     whole_object(n)%wf_phi(whole_object(n)%N_wf_points) = whole_object(n)%wf_phi(1)
+     whole_object(n)%wf_phi(whole_object(n)%N_wf_points) = whole_object(n)%wf_phi(1)
 
 ! enforce increasing times
      DO i = 2, whole_object(n)%N_wf_points-1
@@ -270,332 +263,6 @@ END SUBROUTINE PREPARE_WAVEFORMS
 
 !--------------------------------------------
 !
-SUBROUTINE PREPARE_OSCILLATIONS_AMPLITUDE_PROFILE
-
-  USE ParallelOperationValues, ONLY : Rank_of_process
-  USE CurrentProblemValues, ONLY : whole_object, N_of_boundary_and_inner_objects, METAL_WALL, delta_t_s
-
-  IMPLICIT NONE
-
-  INTEGER n
-
-  CHARACTER(32) initboap_filename   ! init_bo_NN_amplitude_profile.dat
-                                    ! ----x----I----x----I----x----I--
-  LOGICAL exists
-  CHARACTER(1) buf
-  INTEGER iostatus
-  REAL rdummy
-
-  INTEGER wf_period
-  INTEGER delta_T_cntr
-
-  INTEGER ALLOC_ERR
-  INTEGER i
-  
-  INTERFACE
-     FUNCTION convert_int_to_txt_string(int_number, length_of_string)
-       CHARACTER*(length_of_string) convert_int_to_txt_string
-       INTEGER int_number
-       INTEGER length_of_string
-     END FUNCTION convert_int_to_txt_string
-  END INTERFACE
-
-  DO n = 1, N_of_boundary_and_inner_objects
-
-     IF (whole_object(n)%object_type.NE.METAL_WALL) CYCLE 
-
-     initboap_filename = 'init_bo_NN_amplitude_profile.dat'
-     initboap_filename(9:10) = convert_int_to_txt_string(n, 2)
-
-     INQUIRE (FILE = initboap_filename, EXIST = exists)
-     IF (.NOT.exists) CYCLE
-
-     IF (Rank_of_process.EQ.0) PRINT '("### PREPARE_OSCILLATIONS_AMPLITUDE_PROFILE :: found file ",A32," for boundary object ",i2," analyzing...")', initboap_filename, n
-
-     OPEN (11, FILE = initboap_filename)
-     READ (11, '(A1)') buf   ! column 1 is time (ns), column 2 is amplitude factor (dimensionless)
-     whole_object(n)%N_ap_points = 0
-     DO 
-        READ (11, *, iostat = iostatus) rdummy, rdummy
-        IF (iostatus.NE.0) EXIT
-        whole_object(n)%N_ap_points = whole_object(n)%N_ap_points + 1
-     END DO
-     CLOSE (11, STATUS = 'KEEP')
-
-     IF (whole_object(n)%N_ap_points.LE.1) THEN
-        IF (Rank_of_process.EQ.0) PRINT '("### PREPARE_OSCILLATIONS_AMPLITUDE_PROFILE :: WARNING-1 :: not enough (",i4,") valid data points in file ",A32," , oscillations amplitude profile for boundary object ",i2," is off ###")', &
-             & whole_object(n)%N_ap_points, initboap_filename,  n
-        CYCLE
-     END IF
-
-     OPEN (11, FILE = initboap_filename)
-
-     ALLOCATE (whole_object(n)%ap_T_cntr(1:whole_object(n)%N_ap_points), STAT = ALLOC_ERR)
-     ALLOCATE (whole_object(n)%ap_factor(1:whole_object(n)%N_ap_points), STAT = ALLOC_ERR)
-
-     READ (11, '(A1)') buf   ! column 1 is time (ns), column 2 is amplitude factor (dimensionless)
-     DO i = 1, whole_object(n)%N_ap_points
-        READ (11, *) rdummy, whole_object(n)%ap_factor(i)
-        whole_object(n)%ap_T_cntr(i) = INT(rdummy * 1.0d-9 / delta_t_s)
-     END DO
-     CLOSE (11, STATUS = 'KEEP')
-
-! enforce the very first point
-     whole_object(n)%ap_T_cntr(1) = 0
-
-! enforce increasing times
-     DO i = 2, whole_object(n)%N_ap_points-1
-         whole_object(n)%ap_T_cntr(i) = MAX(whole_object(n)%ap_T_cntr(i), whole_object(n)%ap_T_cntr(i-1)+1)
-     END DO
-
-! if the object uses waveforms, adjust ends of non-zero-amplitude-factor intervals to an integer number of waveform periods
-!     IF ((whole_object(n)%use_waveform).AND.(flag_adjust_nonzero_interval.NE.0)) THEN
-     IF (whole_object(n)%use_waveform) THEN
-
-        wf_period = whole_object(n)%wf_T_cntr(whole_object(n)%N_wf_points)
-
-        DO i = 1, whole_object(n)%N_ap_points-1
-           IF ((whole_object(n)%ap_factor(i).EQ.0.0_8).AND.(whole_object(n)%ap_factor(i+1).NE.0.0_8)) THEN
-! the non-zero interval begins
-              delta_T_cntr = whole_object(n)%ap_T_cntr(i+1) - whole_object(n)%ap_T_cntr(i)
-              whole_object(n)%ap_T_cntr(i) = wf_period * INT(whole_object(n)%ap_T_cntr(i) / wf_period)
-              whole_object(n)%ap_T_cntr(i+1) = whole_object(n)%ap_T_cntr(i) + delta_T_cntr
-           END IF
-        END DO
-
-        DO i = 2, whole_object(n)%N_ap_points
-           IF ((whole_object(n)%ap_factor(i-1).NE.0.0_8).AND.(whole_object(n)%ap_factor(i).EQ.0.0_8)) THEN
-! the non-zero interval ends
-              delta_T_cntr = whole_object(n)%ap_T_cntr(i) - whole_object(n)%ap_T_cntr(i-1)
-              whole_object(n)%ap_T_cntr(i) = wf_period * INT(whole_object(n)%ap_T_cntr(i) / wf_period)
-              whole_object(n)%ap_T_cntr(i-1) = whole_object(n)%ap_T_cntr(i) - delta_T_cntr
-           END IF
-        END DO
-
-        i = whole_object(n)%N_ap_points
-        whole_object(n)%ap_T_cntr(i) = wf_period * INT(whole_object(n)%ap_T_cntr(i) / wf_period)
-
-     END IF
-
-! final check
-     whole_object(n)%use_amplitude_profile = .TRUE.
-     DO i = 1, whole_object(n)%N_ap_points-1
-        IF (whole_object(n)%ap_T_cntr(i+1).GT.whole_object(n)%ap_T_cntr(i)) CYCLE
-        whole_object(n)%use_amplitude_profile = .FALSE.
-        EXIT
-     END DO
-
-     IF (whole_object(n)%use_amplitude_profile) THEN
-! passed
-        IF (Rank_of_process.EQ.0) THEN
-           PRINT '("### PREPARE_OSCILLATIONS_AMPLITUDE_PROFILE :: oscillatory potential of boundary object ",i2," will be calculated with the variable amplitude ###")', n
-           DO i = 1, whole_object(n)%N_ap_points
-              PRINT '(2x,i3,2x,i4,2x,i10,2x,f8.3)', n, i, whole_object(n)%ap_T_cntr(i), whole_object(n)%ap_factor(i)
-           END DO
-        END IF
-     ELSE
-! did not pass
-        IF (Rank_of_process.EQ.0) THEN
-           PRINT '("### PREPARE_OSCILLATIONS_AMPLITUDE_PROFILE :: WARNING-4 :: inconsistent data in file ",A32," , oscillation amplitude profile for boundary object ",i2," is off ###")', &
-             & initboap_filename, n
-           DO i = 1, whole_object(n)%N_ap_points
-              PRINT '(12x,i3,2x,i4,2x,i10,2x,f8.3)', n, i, whole_object(n)%ap_T_cntr(i), whole_object(n)%ap_factor(i)
-           END DO
-        END IF
-! cleanup
-        IF (ALLOCATED(whole_object(n)%ap_T_cntr)) DEALLOCATE(whole_object(n)%ap_T_cntr, STAT = ALLOC_ERR)
-        IF (ALLOCATED(whole_object(n)%ap_factor)) DEALLOCATE(whole_object(n)%ap_factor, STAT = ALLOC_ERR)
-     END IF
-
-  END DO
-
-END SUBROUTINE PREPARE_OSCILLATIONS_AMPLITUDE_PROFILE
-
-!--------------------------------------------
-!
-SUBROUTINE PREPARE_EXTERNAL_CIRCUIT
-
-!???  USE ParallelOperationValues, ONLY : Rank_of_process
-  USE ExternalCircuit
-  USE CurrentProblemValues, ONLY : whole_object, N_of_boundary_and_inner_objects, METAL_WALL, delta_t_s, F_scale_V, pi
-  USE BlockAndItsBoundaries
-
-  IMPLICIT NONE
-
-  LOGICAL exists
-  CHARACTER(1) buf
-
-  INTEGER ALLOC_ERR
-
-  INTEGER nn, ntemp, n
-
-! function
-  REAL(8) ECPS_Voltage
-  
-  N_of_object_potentials_to_solve = 0
-  N_of_power_supplies = 0
-  N_of_resistors = 0
-  N_of_capacitors = 0
-  N_of_inductors = 0
-
-  INQUIRE (FILE = 'init_ext_circuit.dat', EXIST = exists)
-  IF (.NOT.exists) RETURN
-
-  OPEN (11, FILE = 'init_ext_circuit.dat')
-
-  READ (11, '(A1)') buf   ! total number of electrodes whose potential must be solved (>0, if <=0 then no external circuit)
-  READ (11, *) N_of_object_potentials_to_solve
-
-  IF (N_of_object_potentials_to_solve.LE.0) THEN
-     N_of_object_potentials_to_solve = 0
-     RETURN
-  END IF
-     
-  ALLOCATE(phi_due_object(indx_x_min:indx_x_max, indx_y_min:indx_y_max, 1:N_of_object_potentials_to_solve), STAT=ALLOC_ERR)
-  ALLOCATE(potential_of_object(1:N_of_object_potentials_to_solve), STAT=ALLOC_ERR)
-  ALLOCATE(charge_of_object(1:N_of_object_potentials_to_solve), STAT=ALLOC_ERR)
-  ALLOCATE(dQ_plasma_of_object(1:N_of_object_potentials_to_solve), STAT=ALLOC_ERR)
-  ALLOCATE(object_charge_coeff(0:N_of_object_potentials_to_solve, 1:N_of_object_potentials_to_solve), STAT=ALLOC_ERR)
-  ALLOCATE(object_charge_calculation(1:N_of_object_potentials_to_solve), STAT=ALLOC_ERR)
-
-  READ (11, '(A1)') buf   ! below list in one column numbers of electrodes whose potential must be solved
-  DO nn = 1, N_of_object_potentials_to_solve
-     READ (11, *) ntemp
-     IF ((ntemp.LT.1).OR.(ntemp.GT.N_of_boundary_and_inner_objects)) THEN
-        PRINT '("error-1 while reading init_ext_circuit.dat, invalid object number ",i8)', ntemp
-        STOP
-     END IF
-     IF (whole_object(ntemp)%object_type.NE.METAL_WALL) THEN
-        PRINT '("error-2 while reading init_ext_circuit.dat, object ",i3," is not metal")', ntemp
-        STOP
-     END IF
-     whole_object(ntemp)%potential_must_be_solved = .TRUE.
-     object_charge_calculation(nn)%noi = ntemp
-  END DO
-
-!--- power supplies
-
-  READ (11, '(A1)') buf   ! number of power supplies in the external circuit (0 if there is no power supply)
-  READ (11, *) N_of_power_supplies
-! just in case
-  N_of_power_supplies = MAX(0, N_of_power_supplies)
-
-  IF (N_of_power_supplies.GT.0) ALLOCATE(EC_power_supply(1:N_of_power_supplies), STAT = ALLOC_ERR)
-
-  READ (11, '(A1)') buf   ! below, for each power supply, provide constant voltage [V], amplitude [V], frequency [Hz], and phase [deg] of harmonic sin(omega*t+phase) voltage oscillations 
-
-  DO n = 1, N_of_power_supplies
-     READ (11, *) EC_power_supply(n)%phi_const, EC_power_supply(n)%phi_var, EC_power_supply(n)%omega, EC_power_supply(n)%phase
-     EC_power_supply(n)%phi_const = EC_power_supply(n)%phi_const / F_scale_V
-     EC_power_supply(n)%phi_var   = EC_power_supply(n)%phi_var / F_scale_V
-     EC_power_supply(n)%omega     = EC_power_supply(n)%omega * 2.0_8 * pi * delta_t_s
-     EC_power_supply(n)%phase     = EC_power_supply(n)%phase * pi / 180.0_8
-  END DO
-
-!--- resistors
-
-  READ (11, '(A1)') buf   ! number of resistors (0 if there are no resistors)
-  READ (11, *) N_of_resistors
-
-  IF (N_of_resistors.GT.0) ALLOCATE(resistor_R_Ohm(1:N_of_resistors), STAT = ALLOC_ERR)
-
-  READ (11, '(A1)') buf   ! below, for each resistor, provide its resistance [Ohm]
-  DO n = 1, N_of_resistors
-     READ (11, *) resistor_R_Ohm(n)
-  END DO
-
-!--- capacitors
-
-  READ (11, '(A1)') buf   ! number of capacitors (0 if there are no capacitors)
-  READ (11, *) N_of_capacitors
-
-  IF (N_of_capacitors.GT.0) ALLOCATE(capacitor_C_F(1:N_of_capacitors), STAT = ALLOC_ERR)
-
-  READ (11, '(A1)') buf   ! below, for each capacitor, provide its capacitance [Farade]
-  DO n = 1, N_of_capacitors
-     READ (11, *) capacitor_C_F(n)
-  END DO
-
-!--- inductors
-
-  READ (11, '(A1)') buf   ! number of inductors (0 if there are no inductors)
-  READ (11, *) N_of_inductors
-
-  IF (N_of_inductors.GT.0) ALLOCATE(inductor_L_H(1:N_of_inductors), STAT = ALLOC_ERR)
-
-  READ (11, '(A1)') buf   ! below, for each inductor, provide its inductance [Henry]
-  DO n = 1, N_of_inductors
-     READ (11, *) inductor_L_H(n)
-  END DO
-
-  CLOSE (11, STATUS = 'KEEP')
-
-!  OPEN  (21, FILE = 'history_ext_circuit.dat', STATUS = 'REPLACE')
-!  CLOSE (21, STATUS = 'KEEP')
-
-  CALL PREPARE_ECPS_WAVEFORMS
-
-  CALL PREPARE_ECPS_OSCILLATIONS_AMPLITUDE_PROFILE
-
-! default values
-  charge_of_object = 0.0_8
-  dQ_plasma_of_object = 0.0_8
-! the piece below works for this particular circuit only, with N_of_object_potentials_to_solve=1
-  DO nn = 1, N_of_object_potentials_to_solve
-     potential_of_object(nn) = ECPS_Voltage(1, 0) !source_U * SIN(source_phase)
-  END DO
-  RETURN
-
-END SUBROUTINE PREPARE_EXTERNAL_CIRCUIT
-
-!-------------------------------------------------------------------------------------------
-!
-SUBROUTINE INITIATE_EXT_CIRCUIT_DIAGNOSTICS
-
-  USE ParallelOperationValues
-  USE CurrentProblemValues, ONLY : N_of_boundary_and_inner_objects, Start_T_cntr
-  USE Checkpoints, ONLY : use_checkpoint
-!  USE Diagnostics, ONLY : N_of_saved_records
-  USE SetupValues, ONLY : ht_use_e_emission_from_cathode, ht_use_e_emission_from_cathode_zerogradf, ht_emission_constant
-  USE ExternalCircuit, ONLY : N_of_object_potentials_to_solve
-
-  IMPLICIT NONE
-
-  LOGICAL exists
-  INTEGER i
-  INTEGER i_dummy
-
-  IF (Rank_of_process.NE.0) RETURN
-
-  IF (ht_use_e_emission_from_cathode.OR.ht_use_e_emission_from_cathode_zerogradf.OR.ht_emission_constant) RETURN
-
-  IF (N_of_object_potentials_to_solve.LE.0) RETURN
-
-  IF (use_checkpoint.EQ.1) THEN
-! start from checkpoint, must trim the time dependences
-
-     INQUIRE (FILE = 'history_ext_circuit.dat', EXIST = exists)
-     IF (exists) THEN                                                       
-        OPEN (21, FILE = 'history_ext_circuit.dat', STATUS = 'OLD')          
-        DO i = 1, Start_T_cntr   !N_of_saved_records             ! these files are updated at every electron timestep
-           READ (21, '(2x,i9,8(2x,e14.7))') i_dummy
-        END DO
-        ENDFILE 21       
-        CLOSE (21, STATUS = 'KEEP')        
-     END IF
-
-  ELSE
-! fresh start, empty files, clean up whatever garbage there might be
-
-     OPEN  (21, FILE = 'history_ext_circuit.dat', STATUS = 'REPLACE')          
-     CLOSE (21, STATUS = 'KEEP')
-
-  END IF
-
-END SUBROUTINE INITIATE_EXT_CIRCUIT_DIAGNOSTICS
-
-!--------------------------------------------
-!
 SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP
 
   USE ParallelOperationValues
@@ -615,7 +282,7 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP
   REAL(8) add_N_e_to_emit   !### double precision now, same as the random numbers, fractional part is treated as probability
 
   INTEGER k
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay, az
   INTEGER tag
 
   INTEGER, ALLOCATABLE :: ibuf_send(:)
@@ -672,9 +339,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP
         CALL GetMaxwellVelocity(vz)
         vy = vy * whole_object(nwo)%factor_convert_vinj_parallel_constant_emit
         vz = vz * whole_object(nwo)%factor_convert_vinj_parallel_constant_emit
+
+        ax = 0.0_8
+        ay = 0.0_8
+        az = 0.0_8
+
         tag = nwo !0
 
-        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
         whole_object(nwo)%electron_emit_count = whole_object(nwo)%electron_emit_count + 1
      END DO
 
@@ -705,9 +377,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP
         CALL GetMaxwellVelocity(vz)
         vy = vy * whole_object(nwo)%factor_convert_vinj_parallel_constant_emit
         vz = vz * whole_object(nwo)%factor_convert_vinj_parallel_constant_emit
+
+        ax = 0.0_8
+        ay = 0.0_8
+        az = 0.0_8
+
         tag = nwo !0
 
-        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
         whole_object(nwo)%electron_emit_count = whole_object(nwo)%electron_emit_count + 1
      END IF
 
@@ -754,9 +431,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP
         CALL GetMaxwellVelocity(vz)
         vx = vx * whole_object(nwo)%factor_convert_vinj_parallel_constant_emit
         vz = vz * whole_object(nwo)%factor_convert_vinj_parallel_constant_emit
+
+        ax = 0.0_8
+        ay = 0.0_8
+        az = 0.0_8
+
         tag = nwo !0
 
-        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
         whole_object(nwo)%electron_emit_count = whole_object(nwo)%electron_emit_count + 1
      END DO
 
@@ -787,9 +469,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP
         CALL GetMaxwellVelocity(vz)
         vx = vx * whole_object(nwo)%factor_convert_vinj_parallel_constant_emit
         vz = vz * whole_object(nwo)%factor_convert_vinj_parallel_constant_emit
+
+        ax = 0.0_8
+        ay = 0.0_8
+        az = 0.0_8
+
         tag = nwo !0
 
-        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
         whole_object(nwo)%electron_emit_count = whole_object(nwo)%electron_emit_count + 1
      END IF
 
@@ -836,9 +523,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP
         CALL GetMaxwellVelocity(vz)
         vy = vy * whole_object(nwo)%factor_convert_vinj_parallel_constant_emit
         vz = vz * whole_object(nwo)%factor_convert_vinj_parallel_constant_emit
+
+        ax = 0.0_8
+        ay = 0.0_8
+        az = 0.0_8
+
         tag = nwo !0
 
-        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
         whole_object(nwo)%electron_emit_count = whole_object(nwo)%electron_emit_count + 1
      END DO
 
@@ -869,9 +561,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP
         CALL GetMaxwellVelocity(vz)
         vy = vy * whole_object(nwo)%factor_convert_vinj_parallel_constant_emit
         vz = vz * whole_object(nwo)%factor_convert_vinj_parallel_constant_emit
+
+        ax = 0.0_8
+        ay = 0.0_8
+        az = 0.0_8
+
         tag = nwo !0
 
-        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
         whole_object(nwo)%electron_emit_count = whole_object(nwo)%electron_emit_count + 1
      END IF
 
@@ -918,9 +615,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP
         CALL GetMaxwellVelocity(vz)
         vx = vx * whole_object(nwo)%factor_convert_vinj_parallel_constant_emit
         vz = vz * whole_object(nwo)%factor_convert_vinj_parallel_constant_emit
+
+        ax = 0.0_8
+        ay = 0.0_8
+        az = 0.0_8
+
         tag = nwo !0
 
-        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
         whole_object(nwo)%electron_emit_count = whole_object(nwo)%electron_emit_count + 1
      END DO
 
@@ -951,9 +653,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP
         CALL GetMaxwellVelocity(vz)
         vx = vx * whole_object(nwo)%factor_convert_vinj_parallel_constant_emit
         vz = vz * whole_object(nwo)%factor_convert_vinj_parallel_constant_emit
+
+        ax = 0.0_8
+        ay = 0.0_8
+        az = 0.0_8
+
         tag = nwo !0
 
-        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
         whole_object(nwo)%electron_emit_count = whole_object(nwo)%electron_emit_count + 1
      END IF
 
@@ -1028,7 +735,7 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP_INNER_OBJECTS
   REAL(8) add_N_e_to_emit
 
   INTEGER k
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay, az
   INTEGER tag
 
   INTEGER, ALLOCATABLE :: ibuf_send(:)
@@ -1115,9 +822,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP_INNER_OBJECTS
               CALL GetMaxwellVelocity(vz)
               vy = vy * whole_object(nio)%factor_convert_vinj_parallel_constant_emit
               vz = vz * whole_object(nio)%factor_convert_vinj_parallel_constant_emit
+
+              ax = 0.0_8
+              ay = 0.0_8
+              az = 0.0_8
+
               tag = nio !0
 
-              CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+              CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
 
            END DO
 
@@ -1171,9 +883,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP_INNER_OBJECTS
               CALL GetMaxwellVelocity(vz)
               vy = vy * whole_object(nio)%factor_convert_vinj_parallel_constant_emit
               vz = vz * whole_object(nio)%factor_convert_vinj_parallel_constant_emit
+
+              ax = 0.0_8
+              ay = 0.0_8
+              az = 0.0_8
+
               tag = nio !0
 
-              CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+              CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
 
               whole_object(nio)%electron_emit_count = whole_object(nio)%electron_emit_count + 1
            END IF
@@ -1244,9 +961,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP_INNER_OBJECTS
               CALL GetMaxwellVelocity(vz)
               vy = vy * whole_object(nio)%factor_convert_vinj_parallel_constant_emit
               vz = vz * whole_object(nio)%factor_convert_vinj_parallel_constant_emit
+             
+              ax = 0.0_8
+              ay = 0.0_8
+              az = 0.0_8
+             
               tag = nio !0
 
-              CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+              CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
 
            END DO
 
@@ -1300,9 +1022,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP_INNER_OBJECTS
               CALL GetMaxwellVelocity(vz)
               vy = vy * whole_object(nio)%factor_convert_vinj_parallel_constant_emit
               vz = vz * whole_object(nio)%factor_convert_vinj_parallel_constant_emit
+              
+              ax = 0.0_8
+              ay = 0.0_8
+              az = 0.0_8
+
               tag = nio !0
 
-              CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+              CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
 
               whole_object(nio)%electron_emit_count = whole_object(nio)%electron_emit_count + 1
            END IF
@@ -1373,9 +1100,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP_INNER_OBJECTS
               CALL GetMaxwellVelocity(vz)
               vx = vx * whole_object(nio)%factor_convert_vinj_parallel_constant_emit
               vz = vz * whole_object(nio)%factor_convert_vinj_parallel_constant_emit
+              
+              ax = 0.0_8
+              ay = 0.0_8
+              az = 0.0_8
+              
               tag = nio !0
 
-              CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+              CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
 
            END DO
 
@@ -1429,9 +1161,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP_INNER_OBJECTS
               CALL GetMaxwellVelocity(vz)
               vx = vx * whole_object(nio)%factor_convert_vinj_parallel_constant_emit
               vz = vz * whole_object(nio)%factor_convert_vinj_parallel_constant_emit
+              
+              ax = 0.0_8
+              ay = 0.0_8
+              az = 0.0_8
+              
               tag = nio !0
 
-              CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+              CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
 
               whole_object(nio)%electron_emit_count = whole_object(nio)%electron_emit_count + 1
            END IF
@@ -1503,9 +1240,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP_INNER_OBJECTS
               CALL GetMaxwellVelocity(vz)
               vx = vx * whole_object(nio)%factor_convert_vinj_parallel_constant_emit
               vz = vz * whole_object(nio)%factor_convert_vinj_parallel_constant_emit
+              
+              ax = 0.0_8
+              ay = 0.0_8
+              az = 0.0_8
+              
               tag = nio !0
 
-              CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+              CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
 
            END DO
 
@@ -1559,9 +1301,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP_INNER_OBJECTS
               CALL GetMaxwellVelocity(vz)
               vx = vx * whole_object(nio)%factor_convert_vinj_parallel_constant_emit
               vz = vz * whole_object(nio)%factor_convert_vinj_parallel_constant_emit
+
+              ax = 0.0_8
+              ay = 0.0_8
+              az = 0.0_8
+
               tag = nio !0
 
-              CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+              CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
 
               whole_object(nio)%electron_emit_count = whole_object(nio)%electron_emit_count + 1
            END IF

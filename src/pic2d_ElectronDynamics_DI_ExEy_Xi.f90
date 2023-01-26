@@ -1,6 +1,7 @@
 !---------------------------------------
+! version C: streaming density equals charge density in the field equation
 !
-SUBROUTINE ADVANCE_ELECTRONS
+SUBROUTINE ADVANCE_ELECTRONS(final_step_flag)
 
   USE ParallelOperationValues
   USE CurrentProblemValues
@@ -11,18 +12,28 @@ SUBROUTINE ADVANCE_ELECTRONS
 
   INCLUDE 'mpif.h'
 
+  LOGICAL final_step_flag
+
   INTEGER ierr
 
   INTEGER k
-  INTEGER i, j
-  REAL(8) ax_ip1, ax_i, ay_jp1, ay_j
+  INTEGER i, j, ix, jx, iy, jy
+  REAL(8) ax_ip1, ax_i, ax_jp1, ax_j !meaning of these coefficients has changed
+  REAL(8) ay_ip1, ay_i, ay_jp1, ay_j
+  REAL(8) X_Ex, Y_Ey
   REAL(8) E_X, E_Y, E_Z
   REAL(8) alfa_x, alfa_y, alfa_z
   REAL(8) alfa_x2, alfa_y2, alfa_z2
   REAL(8) theta2, invtheta
   REAL(8) K11, K12, K13, K21, K22, K23, K31, K32, K33
+  REAL(8) A11, A12, A13, A21, A22, A23, A31, A32, A33
   REAL(8) VX_minus, VY_minus, VZ_minus
   REAL(8) VX_plus, VY_plus, VZ_plus
+  REAL(8) ax, ay, az, dVx, dVy, dVz
+  REAL(8) X_minus, Y_minus, X_move, Y_move, Xtmp ! Xtmp is to handle symmetry boundary condition
+  REAL(8) vec1, vec2, vec3
+
+  REAL(8) Xarg, Yarg ! arguments for evaluating B(x, y), either current position, or pre-push
 
   INTEGER n
   LOGICAL collision_with_inner_object_occurred
@@ -31,7 +42,7 @@ SUBROUTINE ADVANCE_ELECTRONS
   REAL(8) Bx, By, Bz, Ez
 
 ! clear counters of particles to be sent to neighbor processes
-  N_e_to_send_left = 0
+  N_e_to_send_left  = 0
   N_e_to_send_right = 0
   N_e_to_send_above = 0
   N_e_to_send_below = 0
@@ -62,12 +73,13 @@ SUBROUTINE ADVANCE_ELECTRONS
 
 ! interpolate electric field
 
-     i = INT(electron(k)%X)
-     j = INT(electron(k)%Y)
+     i = FLOOR(electron(k)%X)
+     j = FLOOR(electron(k)%Y)
 
      IF (electron(k)%X.EQ.c_X_area_max) i = c_indx_x_max-1
      IF (electron(k)%Y.EQ.c_Y_area_max) j = c_indx_y_max-1
 
+     ! the electron has to be within the cluster to which the block is assigned: 
 if ((i.lt.c_indx_x_min).or.(i.gt.(c_indx_x_max-1)).or.(j.lt.c_indx_y_min).or.(j.gt.(c_indx_y_max-1))) then
    print '("Process ",i4," : Error-2 in ADVANCE_ELECTRONS : index out of bounds")', Rank_of_process
    print '("Process ",i4," : k/N_electrons : ",i8,2x,i8)', Rank_of_process, k, N_electrons
@@ -76,21 +88,71 @@ if ((i.lt.c_indx_x_min).or.(i.gt.(c_indx_x_max-1)).or.(j.lt.c_indx_y_min).or.(j.
    CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
 end if
 
-     ax_ip1 = electron(k)%X - DBLE(i)
+     X_minus = electron(k)%X
+     Y_minus = electron(k)%Y
+
+     Xarg = X_minus
+     Yarg = Y_minus
+
+! velocity prior to either the predictive push or the final push:
+     VX_minus = electron(k)%VX
+     VY_minus = electron(k)%VY
+     VZ_minus = electron(k)%VZ
+
+     ax = electron(k)%AX
+     ay = electron(k)%AY
+
+! interpolate Ex and Ey:
+!     ax_ip1 = X_minus - DBLE(i)
+!     ax_i   = 1.0_8 - ax_ip1
+
+!     ay_jp1 = Y_minus - DBLE(j)
+!     ay_j   = 1.0_8 - ay_jp1
+
+!     E_X = EX(i, j) * ax_i * ay_j + EX(i+1, j) * ax_ip1 * ay_j + EX(i, j+1) * ax_i * ay_jp1 + EX(i+1, j+1) * ax_ip1 * ay_jp1
+!     E_Y = EY(i, j) * ax_i * ay_j + EY(i+1, j) * ax_ip1 * ay_j + EY(i, j+1) * ax_i * ay_jp1 + EY(i+1, j+1) * ax_ip1 * ay_jp1     
+
+     ix = FLOOR(electron(k)%X - 0.5_8)
+     jx = j
+     X_Ex = DBLE(ix) + 0.5_8
+     ax_ip1 = electron(k)%X - X_Ex
      ax_i   = 1.0_8 - ax_ip1
+     ax_jp1 = electron(k)%Y - DBLE(jx)
+     ax_j   = 1.0_8 - ax_jp1
+     E_X = EX(ix, jx) * ax_i * ax_j + EX(ix+1, jx) * ax_ip1 * ax_j + EX(ix, jx+1) * ax_i * ax_jp1 + EX(ix+1, jx+1) * ax_ip1 * ax_jp1
 
-     ay_jp1 = electron(k)%Y - DBLE(j)
-     ay_j = 1.0_8 - ay_jp1
+     iy = i
+     jy = FLOOR(electron(k)%Y - 0.5_8)
+     Y_Ey = DBLE(jy) + 0.5_8
+     ay_ip1 = electron(k)%X - DBLE(iy)
+     ay_i   = 1.0_8 - ay_ip1
+     ay_jp1 = electron(k)%Y - Y_Ey
+     ay_j   = 1.0_8 - ay_jp1
+     E_Y = EY(iy, jy) * ay_i * ay_j + EY(iy+1, jy) * ay_ip1 * ay_j + EY(iy, jy+1) * ay_i * ay_jp1 + EY(iy+1, jy+1) * ay_ip1 * ay_jp1
 
-     E_X = EX(i,j) * ax_i * ay_j + EX(i+1,j) * ax_ip1 * ay_j + EX(i,j+1) * ax_i * ay_jp1 + EX(i+1,j+1) * ax_ip1 * ay_jp1
-     E_Y = EY(i,j) * ax_i * ay_j + EY(i+1,j) * ax_ip1 * ay_j + EY(i,j+1) * ax_i * ay_jp1 + EY(i+1,j+1) * ax_ip1 * ay_jp1
-     E_Z = Ez(electron(k)%X, electron(k)%Y)
+! or per Tasman's note (use original definitions of the interpolation coefficients):
+!       ax_ip1 = electron(k)%X - DBLE(i)
+!       ax_i   = 1.0_8 - ax_ip1
+!       ay_jp1 = electron(k)%Y - DBLE(j)
+!       ay_j   = 1.0_8 - ay_jp1
+!
+!       E_X = EX(i, j) * ay_j + EX(i, j+1) * ay_jp1
+!       E_Y = EY(i, j) * ax_i + EY(i+1, j) * ax_ip1
 
+     IF (final_step_flag) THEN 
+        Xarg = Xarg - VX_minus * delta_t_factor !only used to evaluate mag. field from analyt. expressions
+        Yarg = Yarg - VY_minus * delta_t_factor !
+     ELSE   
+        E_Z = Ez(X_minus, Y_minus) ! for predictive push
+     END IF
+
+! both predictive and final push:     
 ! calculate magnetic field factors
+! at the final step, shift the electrons back to the previous step, before predicting push, to get the field
 
-     alfa_x = -0.5_8 * Bx(electron(k)%X, electron(k)%Y)
-     alfa_y = -0.5_8 * By(electron(k)%X, electron(k)%Y)
-     alfa_z = -0.5_8 * Bz(electron(k)%X, electron(k)%Y)
+     alfa_x = -0.5_8 * Bx(Xarg, Yarg) * delta_t_factor ! Q/M = -1
+     alfa_y = -0.5_8 * By(Xarg, Yarg) * delta_t_factor
+     alfa_z = -0.5_8 * Bz(Xarg, Yarg) * delta_t_factor
 
      alfa_x2 = alfa_x**2
      alfa_y2 = alfa_y**2
@@ -98,74 +160,144 @@ end if
 
      theta2 = alfa_x2 + alfa_y2 + alfa_z2
      invtheta = 1.0_8 / (1.0_8 + theta2)
-
-     K11 = (1.0_8 - theta2 + 2.0_8 * alfa_x2) * invtheta
+    
+!    matrix K, same as R in Gibbons & Hewett; A_inverse = (K + I)/2 = (R + I)/2
+     K11 =  (1.0_8 - theta2 + 2.0_8 * alfa_x2) * invtheta
      K12 =  2.0_8 * (alfa_x * alfa_y + alfa_z) * invtheta
      K13 =  2.0_8 * (alfa_x * alfa_z - alfa_y) * invtheta
 
      K21 =  2.0_8 * (alfa_x * alfa_y - alfa_z) * invtheta
-     K22 = (1.0_8 - theta2 + 2.0_8 * alfa_y2) * invtheta
+     K22 =  (1.0_8 - theta2 + 2.0_8 * alfa_y2) * invtheta
      K23 =  2.0_8 * (alfa_y * alfa_z + alfa_x) * invtheta
 
      K31 =  2.0_8 * (alfa_x * alfa_z + alfa_y) * invtheta
      K32 =  2.0_8 * (alfa_y * alfa_z - alfa_x) * invtheta
-     K33 = (1.0_8 - theta2 + 2.0_8 * alfa_z2) * invtheta
+     K33 =  (1.0_8 - theta2 + 2.0_8 * alfa_z2) * invtheta
+
+     A11 = 0.5_8 * (K11 + 1.0_8)
+     A12 = 0.5_8 * K12
+     A13 = 0.5_8 * K13
+
+     A21 = 0.5_8 * K21
+     A22 = 0.5_8 * (K22 + 1.0_8)
+     A23 = 0.5_8 * K23
+
+     A31 = 0.5_8 * K31
+     A32 = 0.5_8 * K32
+     A33 = 0.5_8 * (K33 + 1.0_8)
+
+     IF (.not.final_step_flag) THEN  ! predictive move
+
+!        ax = 0.5_8 * (ax - E_X) ! ax, ay are accelerations kept from the preceding time step 
+!        ay = 0.5_8 * (ay - E_Y)
+
+! Gibbons & Hewett Eq.(2.6):             
+        vec1 =   0.5_8 * ax  * delta_t_factor
+        vec2 =   0.5_8 * ay  * delta_t_factor
+        vec3 =  -1.0_8 * E_Z * delta_t_factor ! Q/M = -1
+
+        VX_plus = K11 * VX_minus + K12 * VY_minus + K13 * VZ_minus + A11 * vec1 + A12 * vec2 + A13 * vec3
+        VY_plus = K21 * VX_minus + K22 * VY_minus + K23 * VZ_minus + A21 * vec1 + A22 * vec2 + A23 * vec3
+        VZ_plus = K31 * VX_minus + K32 * VY_minus + K33 * VZ_minus + A31 * vec1 + A32 * vec2 + A33 * vec3
+
+        electron(k)%VX = VX_plus
+        electron(k)%VY = VY_plus
+        electron(k)%VZ = VZ_plus
+        
+        X_move =  VX_plus * delta_t_factor
+        Y_move =  VY_plus * delta_t_factor
+
+        electron(k)%X = X_minus + X_move
+        electron(k)%Y = Y_minus + Y_move
+
+!        electron(k)%AX = ax
+!        electron(k)%AY = ay        
+     END IF
+
+     IF (final_step_flag) THEN
+! Gibbons & Hewett Eq.(2.7)             
+        dVx = -0.5_8 * delta_t_factor * (A11 * E_X + A12 * E_Y) ! Q/M = -1
+        dVy = -0.5_8 * delta_t_factor * (A21 * E_X + A22 * E_Y)
+        dVz = -0.5_8 * delta_t_factor * (A31 * E_X + A32 * E_Y)
+        
+        electron(k)%VX = VX_minus + dVx
+        electron(k)%VY = VY_minus + dVy
+        electron(k)%VZ = VZ_minus + dVz
+
+        X_move = dVx * delta_t_factor
+        Y_move = dVy * delta_t_factor
+
+        electron(k)%X = X_minus + X_move
+        electron(k)%Y = Y_minus + Y_move
+! update acceleration here:
+        electron(k)%AX = 0.5_8 * (ax - E_X)
+        electron(k)%AY = 0.5_8 * (ay - E_Y)
+     END IF    
 
 !print *, K11*(K22*K33-K23*K32) - K12*(K21*K33-K23*K31) + K13*(K21*K32-K22*K31), E_X*E_scale_Vm
 
 ! velocity advance: first half-acceleration due to electric field
 
-     VX_minus = electron(k)%VX - 0.5_8 * E_X
-     VY_minus = electron(k)%VY - 0.5_8 * E_Y
-     VZ_minus = electron(k)%VZ - 0.5_8 * E_Z
+!!     VX_minus = electron(k)%VX - 0.5_8 * E_X
+!!     VY_minus = electron(k)%VY - 0.5_8 * E_Y
+!!     VZ_minus = electron(k)%VZ - 0.5_8 * E_Z
 
 ! velocity advance: rotation in the magnetic field
 
-     VX_plus = K11 * VX_minus + K12 * VY_minus + K13 * VZ_minus
-     VY_plus = K21 * VX_minus + K22 * VY_minus + K23 * VZ_minus
-     VZ_plus = K31 * VX_minus + K32 * VY_minus + K33 * VZ_minus
+!!     VX_plus = K11 * VX_minus + K12 * VY_minus + K13 * VZ_minus
+!!     VY_plus = K21 * VX_minus + K22 * VY_minus + K23 * VZ_minus
+!!     VZ_plus = K31 * VX_minus + K32 * VY_minus + K33 * VZ_minus
 
 ! velocity advance: second half-acceleration due to electric field
 
-     electron(k)%VX = VX_plus - 0.5_8 * E_X
-     electron(k)%VY = VY_plus - 0.5_8 * E_Y
-     electron(k)%VZ = VZ_plus - 0.5_8 * E_Z
+ !!    electron(k)%VX = VX_plus - 0.5_8 * E_X
+ !!    electron(k)%VY = VY_plus - 0.5_8 * E_Y
+ !!    electron(k)%VZ = VZ_plus - 0.5_8 * E_Z
 
 ! coordinate advance
 
-!###     IF (ABS(electron(k)%VX).GT.1.0_8) THEN
+!     IF (ABS(electron(k)%VX).GT.1.0_8) THEN
 !        PRINT '("Error in process ",i4," too high VX of electron ",i9," :: X/Y/VX/VY/VZ are ",5(2x,e12.5))', &
 !             & Rank_of_process, k, electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ
 !        CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
-!###     END IF
+!     END IF
 
-!###     IF(ABS(electron(k)%VY).GT.1.0_8) THEN
+!     IF(ABS(electron(k)%VY).GT.1.0_8) THEN
 !        PRINT '("Error in process ",i4," too high VY of electron ",i9," :: X/Y/VX/VY/VZ are ",5(2x,e12.5))', &
 !             & Rank_of_process, k, electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ
 !        CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
-!###     END IF
+!     END IF
 
-     electron(k)%X = electron(k)%X + electron(k)%VX
-     electron(k)%Y = electron(k)%Y + electron(k)%VY
+!!     electron(k)%X = electron(k)%X + electron(k)%VX
+!!     electron(k)%Y = electron(k)%Y + electron(k)%VY
 
-! a particle crossed symmetry plane, reflect it
+     ! a particle crossed symmetry plane, reflect it (both predictive and final push)
      IF (symmetry_plane_X_left) THEN
         IF (electron(k)%X.LT.c_X_area_min) THEN
+           Xtmp = electron(k)%X - X_move
            electron(k)%X = MAX(c_X_area_min, c_X_area_min + c_X_area_min - electron(k)%X)
-           electron(k)%VX = -electron(k)%VX
-!###          electron(k)%VZ = -electron(k)%VZ   !###??? do we not have to do this when BY is on ??? 
+           electron(k)%VX = - electron(k)%VX
+!!***06/12/22           electron(k)%VZ = -electron(k)%VZ ! enforces symmetry wih mag. field?
+           X_move = electron(k)%X - Xtmp
+!           electron(k)%AX = -electron(k)%AX !not sure, but may not matter as AX = 0 on the symmetry line
+!###          electron(k)%VZ = -electron(k)%VZ   !###??? do we not have to do this when BY is on ???
         END IF
      END IF
 
+     ax = electron(k)%AX
+     ay = electron(k)%AY
+     az = electron(k)%AZ
+
 ! check whether a collision with an inner object occurred
      collision_with_inner_object_occurred = .FALSE.
-     DO n = N_of_boundary_objects+1, N_of_boundary_and_inner_objects
+     DO n = N_of_boundary_objects + 1, N_of_boundary_and_inner_objects
         IF (electron(k)%X.LE.whole_object(n)%Xmin) CYCLE
         IF (electron(k)%X.GE.whole_object(n)%Xmax) CYCLE
         IF (electron(k)%Y.LE.whole_object(n)%Ymin) CYCLE
         IF (electron(k)%Y.GE.whole_object(n)%Ymax) CYCLE
 ! collision detected
-        CALL TRY_ELECTRON_COLL_WITH_INNER_OBJECT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag) !, whole_object(n))
+!        write (*, *) "TRY 2"
+        CALL TRY_ELECTRON_COLL_WITH_INNER_OBJECT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, X_move, Y_move, electron(k)%tag)!, whole_object(n))
         CALL REMOVE_ELECTRON(k)  ! this subroutine does  N_electrons = N_electrons - 1 and k = k-1
         collision_with_inner_object_occurred = .TRUE.
         EXIT
@@ -194,7 +326,7 @@ end if
               IF (Rank_of_master_below.LT.0) THEN
                  CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
               ELSE
-                 CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)                       
+                 CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)                       
               END IF
               CALL REMOVE_ELECTRON(k)  ! this subroutine does  N_electrons = N_electrons - 1 and k = k-1
            ELSE IF (electron(k)%Y.GT.c_Y_area_max) THEN
@@ -202,7 +334,7 @@ end if
               IF (Rank_of_master_above.LT.0) THEN
                  CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
               ELSE
-                 CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
               END IF
               CALL REMOVE_ELECTRON(k)  ! this subroutine does  N_electrons = N_electrons - 1 and k = k-1
            END IF
@@ -215,7 +347,7 @@ end if
 
            IF (Rank_of_master_left.GE.0) THEN
 ! left neighbor cluster exists
-              CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+              CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
            ELSE
 ! left neighbor cluster does not exist
               CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX,  electron(k)%VY, electron(k)%VZ, electron(k)%tag)   ! left
@@ -227,19 +359,19 @@ end if
            SELECT CASE (c_left_bottom_corner_type)
               CASE (HAS_TWO_NEIGHBORS)
                  IF ((c_X_area_min-electron(k)%X).LT.(c_Y_area_min-electron(k)%Y)) THEN
-                    CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
                  ELSE
-                    CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
                  END IF
 
               CASE (FLAT_WALL_BELOW)
-                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
 
               CASE (FLAT_WALL_LEFT)
                  IF (electron(k)%Y.GE.c_Y_area_min) THEN                 
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
                  ELSE
-                    CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)                       
+                    CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)                       
                  END IF
 
               CASE (SURROUNDED_BY_WALL)
@@ -250,10 +382,10 @@ end if
                  END IF
 
               CASE (EMPTY_CORNER_WALL_LEFT)
-                 CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
                
               CASE (EMPTY_CORNER_WALL_BELOW)
-                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
 
            END SELECT
 
@@ -263,19 +395,19 @@ end if
            SELECT CASE (c_left_top_corner_type)
               CASE (HAS_TWO_NEIGHBORS)
                  IF ((c_X_area_min-electron(k)%X).LT.(electron(k)%Y-c_Y_area_max)) THEN
-                    CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
                  ELSE
-                    CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
                  END IF
 
               CASE (FLAT_WALL_ABOVE)
-                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
 
               CASE (FLAT_WALL_LEFT)
                  IF (electron(k)%Y.LE.c_Y_area_max) THEN                 
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
                  ELSE
-                    CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
                  END IF
 
               CASE (SURROUNDED_BY_WALL)
@@ -286,10 +418,10 @@ end if
                  END IF
 
               CASE (EMPTY_CORNER_WALL_LEFT)
-                 CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
 
               CASE (EMPTY_CORNER_WALL_ABOVE)
-                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
 
            END SELECT
 
@@ -313,7 +445,7 @@ end if
               IF (Rank_of_master_below.LT.0) THEN
                  CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
               ELSE
-                 CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)                       
+                 CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)                       
               END IF
               CALL REMOVE_ELECTRON(k)  ! this subroutine does  N_electrons = N_electrons - 1 and k = k-1
            ELSE IF (electron(k)%Y.GT.c_Y_area_max) THEN
@@ -321,7 +453,7 @@ end if
               IF (Rank_of_master_above.LT.0) THEN
                  CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
               ELSE
-                 CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
               END IF
               CALL REMOVE_ELECTRON(k)  ! this subroutine does  N_electrons = N_electrons - 1 and k = k-1
            END IF
@@ -334,7 +466,7 @@ end if
 
            IF (Rank_of_master_right.GE.0) THEN
 ! right neighbor cluster exists
-              CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+              CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
            ELSE
 ! right neighbor cluster does not exist
               CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
@@ -346,19 +478,19 @@ end if
            SELECT CASE (c_right_bottom_corner_type)
               CASE (HAS_TWO_NEIGHBORS)
                  IF ((electron(k)%X-c_X_area_max).LT.(c_Y_area_min-electron(k)%Y)) THEN
-                    CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
                  ELSE
-                    CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
                  END IF
 
               CASE (FLAT_WALL_BELOW)
-                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
                 
               CASE (FLAT_WALL_RIGHT)
                  IF (electron(k)%Y.GE.c_Y_area_min) THEN
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
                  ELSE
-                    CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)                       
+                    CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)                       
                  END IF
 
               CASE (SURROUNDED_BY_WALL)
@@ -369,10 +501,10 @@ end if
                  END IF
 
               CASE (EMPTY_CORNER_WALL_RIGHT)
-                 CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
 
               CASE (EMPTY_CORNER_WALL_BELOW)
-                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
 
            END SELECT
 
@@ -382,19 +514,19 @@ end if
            SELECT CASE (c_right_top_corner_type)
               CASE (HAS_TWO_NEIGHBORS)
                  IF ((electron(k)%X-c_X_area_max).LT.(electron(k)%Y-c_Y_area_max)) THEN
-                    CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
                  ELSE
-                    CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
                  END IF
 
               CASE (FLAT_WALL_ABOVE)
-                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
 
               CASE (FLAT_WALL_RIGHT)
                  IF (electron(k)%Y.LE.c_Y_area_max) THEN
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
                  ELSE
-                    CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)                    
+                    CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)                    
                  END IF
 
               CASE (SURROUNDED_BY_WALL)
@@ -405,10 +537,10 @@ end if
                  END IF
 
               CASE (EMPTY_CORNER_WALL_RIGHT)
-                 CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
 
               CASE (EMPTY_CORNER_WALL_ABOVE)
-                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
 
            END SELECT
 
@@ -428,7 +560,7 @@ end if
         IF (periodic_boundary_X_left.AND.periodic_boundary_X_right) THEN
            IF (Rank_of_master_above.GE.0) THEN
 ! neighbor cluster above exists
-              CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+              CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
            ELSE
               CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
            END IF
@@ -438,7 +570,7 @@ end if
 
         IF (Rank_of_master_above.GE.0) THEN
 ! neighbor cluster above exists
-           CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+           CALL ADD_ELECTRON_TO_SEND_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
         ELSE
 ! neighbor cluster above does not exist
            IF ((electron(k)%X.GE.(c_X_area_min+1.0_8)).AND.(electron(k)%X.LE.(c_X_area_max-1.0_8))) THEN
@@ -447,14 +579,14 @@ end if
            ELSE IF (electron(k)%X.LT.(c_X_area_min+1.0_8)) THEN
 ! particle near the left top corner
               IF (c_left_top_corner_type.EQ.EMPTY_CORNER_WALL_ABOVE) THEN
-                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
               ELSE
                  CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
               END IF
            ELSE IF (electron(k)%X.GT.(c_X_area_max-1.0_8)) THEN
 ! particle near the right top corner
               IF (c_right_top_corner_type.EQ.EMPTY_CORNER_WALL_ABOVE) THEN
-                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX,  electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX,  electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
               ELSE
                  CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
               END IF
@@ -469,7 +601,7 @@ end if
         IF (periodic_boundary_X_left.AND.periodic_boundary_X_right) THEN
            IF (Rank_of_master_below.GE.0) THEN
 ! neighbor cluster above exists
-              CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+              CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
            ELSE
               CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
            END IF
@@ -479,7 +611,7 @@ end if
 
         IF (Rank_of_master_below.GE.0) THEN
 ! neighbor cluster below exists, remove particle and prepare to send it to the neighbor below
-           CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+           CALL ADD_ELECTRON_TO_SEND_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
         ELSE
 ! neighbor cluster below does not exist
            IF ((electron(k)%X.GE.(c_X_area_min+1.0_8)).AND.(electron(k)%X.LE.(c_X_area_max-1.0_8))) THEN
@@ -488,14 +620,14 @@ end if
            ELSE IF (electron(k)%X.LT.(c_X_area_min+1.0_8)) THEN
 ! particle near the left bottom corner
               IF (c_left_bottom_corner_type.EQ.EMPTY_CORNER_WALL_BELOW) THEN
-                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
               ELSE
                  CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
               END IF
            ELSE IF (electron(k)%X.GT.(c_X_area_max-1.0_8)) THEN
 ! particle near the right bottom corner
               IF (c_right_bottom_corner_type.EQ.EMPTY_CORNER_WALL_BELOW) THEN
-                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, ax,ay,az, electron(k)%tag)
               ELSE
                  CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_BELOW(electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag)
               END IF
@@ -541,6 +673,11 @@ SUBROUTINE REMOVE_ELECTRON(k)
      electron(k)%VX  = electron(N_electrons)%VX
      electron(k)%VY  = electron(N_electrons)%VY
      electron(k)%VZ  = electron(N_electrons)%VZ
+
+     electron(k)%AX  = electron(N_electrons)%AX !
+     electron(k)%AY  = electron(N_electrons)%AY !
+     electron(k)%AZ  = electron(N_electrons)%AZ !
+
      electron(k)%tag = electron(N_electrons)%tag
 
   END IF
@@ -554,7 +691,7 @@ END SUBROUTINE REMOVE_ELECTRON
 
 !------------------------------------------
 !
-SUBROUTINE ADD_ELECTRON_TO_SEND_LEFT(x, y, vx, vy, vz, tag)
+SUBROUTINE ADD_ELECTRON_TO_SEND_LEFT(x, y, vx, vy, vz, ax, ay, az, tag)
 
   USE ElectronParticles, ONLY : N_e_to_send_left, max_N_e_to_send_left, electron_to_send_left
   USE ClusterAndItsBoundaries, ONLY : periodic_boundary_X_left, L_period_x
@@ -564,19 +701,22 @@ SUBROUTINE ADD_ELECTRON_TO_SEND_LEFT(x, y, vx, vy, vz, tag)
 
   IMPLICIT NONE
 
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay, az
   INTEGER tag
 
-  TYPE particle
+  TYPE particle_9
      real(8) X
      real(8) Y
      real(8) VX
      real(8) VY
      real(8) VZ
+     real(8) ax
+     real(8) ay
+     real(8) az
      integer tag
-  END TYPE particle
+  END TYPE particle_9
 
-  TYPE(particle), ALLOCATABLE :: bufer(:)
+  TYPE(particle_9), ALLOCATABLE :: bufer(:)
 
   INTEGER ALLOC_ERR, DEALLOC_ERR
   INTEGER k, current_N
@@ -593,6 +733,11 @@ SUBROUTINE ADD_ELECTRON_TO_SEND_LEFT(x, y, vx, vy, vz, tag)
         bufer(k)%VX  = electron_to_send_left(k)%VX
         bufer(k)%VY  = electron_to_send_left(k)%VY
         bufer(k)%VZ  = electron_to_send_left(k)%VZ
+
+        bufer(k)%AX  = electron_to_send_left(k)%AX
+        bufer(k)%AY  = electron_to_send_left(k)%AY
+        bufer(k)%AZ  = electron_to_send_left(k)%AZ
+
         bufer(k)%tag = electron_to_send_left(k)%tag
      END DO
      IF (ALLOCATED(electron_to_send_left)) DEALLOCATE(electron_to_send_left, STAT=DEALLOC_ERR)
@@ -604,6 +749,11 @@ SUBROUTINE ADD_ELECTRON_TO_SEND_LEFT(x, y, vx, vy, vz, tag)
         electron_to_send_left(k)%VX  = bufer(k)%VX
         electron_to_send_left(k)%VY  = bufer(k)%VY
         electron_to_send_left(k)%VZ  = bufer(k)%VZ
+
+        electron_to_send_left(k)%AX  = bufer(k)%AX
+        electron_to_send_left(k)%AY  = bufer(k)%AY
+        electron_to_send_left(k)%AZ  = bufer(k)%AZ
+
         electron_to_send_left(k)%tag = bufer(k)%tag
      END DO
      IF (ALLOCATED(bufer)) DEALLOCATE(bufer, STAT=DEALLOC_ERR)
@@ -618,6 +768,11 @@ SUBROUTINE ADD_ELECTRON_TO_SEND_LEFT(x, y, vx, vy, vz, tag)
   electron_to_send_left(N_e_to_send_left)%VX  = vx
   electron_to_send_left(N_e_to_send_left)%VY  = vy
   electron_to_send_left(N_e_to_send_left)%VZ  = vz
+
+  electron_to_send_left(N_e_to_send_left)%AX  = ax
+  electron_to_send_left(N_e_to_send_left)%AY  = ay
+  electron_to_send_left(N_e_to_send_left)%AZ  = az
+
   electron_to_send_left(N_e_to_send_left)%tag = tag
 
 !print '("Process ",i4," called ADD_ELECTRON_TO_SEND_LEFT, T_cntr= ",i7)', Rank_of_process, T_cntr
@@ -626,7 +781,7 @@ END SUBROUTINE ADD_ELECTRON_TO_SEND_LEFT
 
 !------------------------------------------
 !
-SUBROUTINE ADD_ELECTRON_TO_SEND_RIGHT(x, y, vx, vy, vz, tag)
+SUBROUTINE ADD_ELECTRON_TO_SEND_RIGHT(x, y, vx, vy, vz, ax, ay, az, tag)
 
   USE ElectronParticles, ONLY : N_e_to_send_right, max_N_e_to_send_right, electron_to_send_right
   USE ClusterAndItsBoundaries, ONLY : periodic_boundary_X_right, L_period_x
@@ -636,19 +791,22 @@ SUBROUTINE ADD_ELECTRON_TO_SEND_RIGHT(x, y, vx, vy, vz, tag)
 
   IMPLICIT NONE
 
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay, az
   INTEGER tag
 
-  TYPE particle
+  TYPE particle_9
      real(8) X
      real(8) Y
      real(8) VX
      real(8) VY
      real(8) VZ
+     real(8) ax
+     real(8) ay
+     real(8) az
      integer tag
-  END TYPE particle
+  END TYPE particle_9
 
-  TYPE(particle), ALLOCATABLE :: bufer(:)
+  TYPE(particle_9), ALLOCATABLE :: bufer(:)
 
   INTEGER ALLOC_ERR, DEALLOC_ERR
   INTEGER k, current_N
@@ -665,6 +823,11 @@ SUBROUTINE ADD_ELECTRON_TO_SEND_RIGHT(x, y, vx, vy, vz, tag)
         bufer(k)%VX  = electron_to_send_right(k)%VX
         bufer(k)%VY  = electron_to_send_right(k)%VY
         bufer(k)%VZ  = electron_to_send_right(k)%VZ
+
+        bufer(k)%AX  = electron_to_send_right(k)%AX
+        bufer(k)%AY  = electron_to_send_right(k)%AY
+        bufer(k)%AZ  = electron_to_send_right(k)%AZ
+
         bufer(k)%tag = electron_to_send_right(k)%tag
      END DO
      IF (ALLOCATED(electron_to_send_right)) DEALLOCATE(electron_to_send_right, STAT=DEALLOC_ERR)
@@ -676,6 +839,11 @@ SUBROUTINE ADD_ELECTRON_TO_SEND_RIGHT(x, y, vx, vy, vz, tag)
         electron_to_send_right(k)%VX  = bufer(k)%VX
         electron_to_send_right(k)%VY  = bufer(k)%VY
         electron_to_send_right(k)%VZ  = bufer(k)%VZ
+
+        electron_to_send_right(k)%AX  = bufer(k)%AX
+        electron_to_send_right(k)%AY  = bufer(k)%AY
+        electron_to_send_right(k)%AZ  = bufer(k)%AZ
+
         electron_to_send_right(k)%tag = bufer(k)%tag
      END DO
      IF (ALLOCATED(bufer)) DEALLOCATE(bufer, STAT=DEALLOC_ERR)
@@ -690,6 +858,11 @@ SUBROUTINE ADD_ELECTRON_TO_SEND_RIGHT(x, y, vx, vy, vz, tag)
   electron_to_send_right(N_e_to_send_right)%VX  = vx
   electron_to_send_right(N_e_to_send_right)%VY  = vy
   electron_to_send_right(N_e_to_send_right)%VZ  = vz
+
+  electron_to_send_right(N_e_to_send_right)%AX  = ax
+  electron_to_send_right(N_e_to_send_right)%AY  = ay
+  electron_to_send_right(N_e_to_send_right)%AZ  = az
+
   electron_to_send_right(N_e_to_send_right)%tag = tag
 
 !print '("Process ",i4," called ADD_ELECTRON_TO_SEND_RIGHT, T_cntr= ",i7)', Rank_of_process, T_cntr
@@ -699,7 +872,7 @@ END SUBROUTINE ADD_ELECTRON_TO_SEND_RIGHT
 
 !------------------------------------------
 !
-SUBROUTINE ADD_ELECTRON_TO_SEND_ABOVE(x, y, vx, vy, vz, tag)
+SUBROUTINE ADD_ELECTRON_TO_SEND_ABOVE(x, y, vx, vy, vz, ax, ay, az, tag)
 
   USE ElectronParticles, ONLY : N_e_to_send_above, max_N_e_to_send_above, electron_to_send_above
   USE ClusterAndItsBoundaries, ONLY : periodic_boundary_Y_above, L_period_y
@@ -709,19 +882,22 @@ SUBROUTINE ADD_ELECTRON_TO_SEND_ABOVE(x, y, vx, vy, vz, tag)
 
   IMPLICIT NONE
 
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay, az
   INTEGER tag
 
-  TYPE particle
+  TYPE particle_9
      real(8) X
      real(8) Y
      real(8) VX
      real(8) VY
      real(8) VZ
+     real(8) ax
+     real(8) ay
+     real(8) az
      integer tag
-  END TYPE particle
+  END TYPE particle_9
 
-  TYPE(particle), ALLOCATABLE :: bufer(:)
+  TYPE(particle_9), ALLOCATABLE :: bufer(:)
 
   INTEGER ALLOC_ERR, DEALLOC_ERR
   INTEGER k, current_N
@@ -738,6 +914,11 @@ SUBROUTINE ADD_ELECTRON_TO_SEND_ABOVE(x, y, vx, vy, vz, tag)
         bufer(k)%VX  = electron_to_send_above(k)%VX
         bufer(k)%VY  = electron_to_send_above(k)%VY
         bufer(k)%VZ  = electron_to_send_above(k)%VZ
+
+        bufer(k)%AX  = electron_to_send_above(k)%AX
+        bufer(k)%AY  = electron_to_send_above(k)%AY
+        bufer(k)%AZ  = electron_to_send_above(k)%AZ
+
         bufer(k)%tag = electron_to_send_above(k)%tag
      END DO
      IF (ALLOCATED(electron_to_send_above)) DEALLOCATE(electron_to_send_above, STAT=DEALLOC_ERR)
@@ -749,6 +930,11 @@ SUBROUTINE ADD_ELECTRON_TO_SEND_ABOVE(x, y, vx, vy, vz, tag)
         electron_to_send_above(k)%VX  = bufer(k)%VX
         electron_to_send_above(k)%VY  = bufer(k)%VY
         electron_to_send_above(k)%VZ  = bufer(k)%VZ
+
+        electron_to_send_above(k)%AX  = bufer(k)%AX
+        electron_to_send_above(k)%AY  = bufer(k)%AY
+        electron_to_send_above(k)%AZ  = bufer(k)%AZ
+
         electron_to_send_above(k)%tag = bufer(k)%tag
      END DO
      IF (ALLOCATED(bufer)) DEALLOCATE(bufer, STAT=DEALLOC_ERR)
@@ -763,6 +949,11 @@ SUBROUTINE ADD_ELECTRON_TO_SEND_ABOVE(x, y, vx, vy, vz, tag)
   electron_to_send_above(N_e_to_send_above)%VX  = vx
   electron_to_send_above(N_e_to_send_above)%VY  = vy
   electron_to_send_above(N_e_to_send_above)%VZ  = vz
+
+  electron_to_send_above(N_e_to_send_above)%AX  = ax
+  electron_to_send_above(N_e_to_send_above)%AY  = ay
+  electron_to_send_above(N_e_to_send_above)%AZ  = az
+
   electron_to_send_above(N_e_to_send_above)%tag = tag
 
 !print '("Process ",i4," called ADD_ELECTRON_TO_SEND_ABOVE, T_cntr= ",i7)', Rank_of_process, T_cntr
@@ -771,7 +962,7 @@ END SUBROUTINE ADD_ELECTRON_TO_SEND_ABOVE
 
 !------------------------------------------
 !
-SUBROUTINE ADD_ELECTRON_TO_SEND_BELOW(x, y, vx, vy, vz, tag)
+SUBROUTINE ADD_ELECTRON_TO_SEND_BELOW(x, y, vx, vy, vz, ax, ay, az, tag)
 
   USE ElectronParticles, ONLY : N_e_to_send_below, max_N_e_to_send_below, electron_to_send_below
   USE ClusterAndItsBoundaries, ONLY : periodic_boundary_Y_below, L_period_y
@@ -781,19 +972,22 @@ SUBROUTINE ADD_ELECTRON_TO_SEND_BELOW(x, y, vx, vy, vz, tag)
 
   IMPLICIT NONE
 
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay, az
   INTEGER tag
 
-  TYPE particle
+  TYPE particle_9
      real(8) X
      real(8) Y
      real(8) VX
      real(8) VY
      real(8) VZ
+     real(8) ax
+     real(8) ay
+     real(8) az
      integer tag
-  END TYPE particle
+  END TYPE particle_9
 
-  TYPE(particle), ALLOCATABLE :: bufer(:)
+  TYPE(particle_9), ALLOCATABLE :: bufer(:)
 
   INTEGER ALLOC_ERR, DEALLOC_ERR
   INTEGER k, current_N
@@ -810,6 +1004,11 @@ SUBROUTINE ADD_ELECTRON_TO_SEND_BELOW(x, y, vx, vy, vz, tag)
         bufer(k)%VX  = electron_to_send_below(k)%VX
         bufer(k)%VY  = electron_to_send_below(k)%VY
         bufer(k)%VZ  = electron_to_send_below(k)%VZ
+
+        bufer(k)%AX  = electron_to_send_below(k)%AX
+        bufer(k)%AY  = electron_to_send_below(k)%AY
+        bufer(k)%AZ  = electron_to_send_below(k)%AZ
+
         bufer(k)%tag = electron_to_send_below(k)%tag
      END DO
      IF (ALLOCATED(electron_to_send_below)) DEALLOCATE(electron_to_send_below, STAT=DEALLOC_ERR)
@@ -821,6 +1020,11 @@ SUBROUTINE ADD_ELECTRON_TO_SEND_BELOW(x, y, vx, vy, vz, tag)
         electron_to_send_below(k)%VX  = bufer(k)%VX
         electron_to_send_below(k)%VY  = bufer(k)%VY
         electron_to_send_below(k)%VZ  = bufer(k)%VZ
+
+        electron_to_send_below(k)%AX  = bufer(k)%AX
+        electron_to_send_below(k)%AY  = bufer(k)%AY
+        electron_to_send_below(k)%AZ  = bufer(k)%AZ
+
         electron_to_send_below(k)%tag = bufer(k)%tag
      END DO
      IF (ALLOCATED(bufer)) DEALLOCATE(bufer, STAT=DEALLOC_ERR)
@@ -835,6 +1039,11 @@ SUBROUTINE ADD_ELECTRON_TO_SEND_BELOW(x, y, vx, vy, vz, tag)
   electron_to_send_below(N_e_to_send_below)%VX  = vx
   electron_to_send_below(N_e_to_send_below)%VY  = vy
   electron_to_send_below(N_e_to_send_below)%VZ  = vz
+
+  electron_to_send_below(N_e_to_send_below)%AX  = ax
+  electron_to_send_below(N_e_to_send_below)%AY  = ay
+  electron_to_send_below(N_e_to_send_below)%AZ  = az
+
   electron_to_send_below(N_e_to_send_below)%tag = tag
 
 !print '("Process ",i4," called ADD_ELECTRON_TO_SEND_BELOW, T_cntr= ",i7)', Rank_of_process, T_cntr
@@ -844,26 +1053,29 @@ END SUBROUTINE ADD_ELECTRON_TO_SEND_BELOW
 
 !----------------------------------------
 !
-SUBROUTINE ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+SUBROUTINE ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
 
   USE ElectronParticles, ONLY : N_e_to_add, max_N_e_to_add, electron_to_add
 !  USE ParallelOperationValues
 
   IMPLICIT NONE
 
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay, az
   INTEGER tag
 
-  TYPE particle
+  TYPE particle_9
      real(8) X
      real(8) Y
      real(8) VX
      real(8) VY
      real(8) VZ
+     real(8) AX ! 
+     real(8) AY !
+     real(8) AZ !
      integer tag
-  END TYPE particle
+  END TYPE particle_9
 
-  TYPE(particle), ALLOCATABLE :: bufer(:)
+  TYPE(particle_9), ALLOCATABLE :: bufer(:)
 
   INTEGER ALLOC_ERR, DEALLOC_ERR
   INTEGER k, current_N
@@ -880,6 +1092,11 @@ SUBROUTINE ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
         bufer(k)%VX  = electron_to_add(k)%VX
         bufer(k)%VY  = electron_to_add(k)%VY
         bufer(k)%VZ  = electron_to_add(k)%VZ
+
+        bufer(k)%AX  = electron_to_add(k)%AX !
+        bufer(k)%AY  = electron_to_add(k)%AY !
+        bufer(k)%AZ  = electron_to_add(k)%AZ !
+
         bufer(k)%tag = electron_to_add(k)%tag
      END DO
      IF (ALLOCATED(electron_to_add)) DEALLOCATE(electron_to_add, STAT=DEALLOC_ERR)
@@ -891,6 +1108,11 @@ SUBROUTINE ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
         electron_to_add(k)%VX  = bufer(k)%VX
         electron_to_add(k)%VY  = bufer(k)%VY
         electron_to_add(k)%VZ  = bufer(k)%VZ
+
+        electron_to_add(k)%AX  = bufer(k)%AX !
+        electron_to_add(k)%AY  = bufer(k)%AY !
+        electron_to_add(k)%AZ  = bufer(k)%AZ !
+
         electron_to_add(k)%tag = bufer(k)%tag
      END DO
      IF (ALLOCATED(bufer)) DEALLOCATE(bufer, STAT=DEALLOC_ERR)
@@ -901,6 +1123,11 @@ SUBROUTINE ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
   electron_to_add(N_e_to_add)%VX  = vx
   electron_to_add(N_e_to_add)%VY  = vy
   electron_to_add(N_e_to_add)%VZ  = vz
+
+  electron_to_add(N_e_to_add)%AX  = ax !
+  electron_to_add(N_e_to_add)%AY  = ay !
+  electron_to_add(N_e_to_add)%AZ  = az !
+
   electron_to_add(N_e_to_add)%tag = tag
 
 !print '("Process ",i4," called ADD_ELECTRON_TO_ADD_LIST, T_cntr= ",i7)', Rank_of_process, T_cntr
@@ -937,6 +1164,11 @@ SUBROUTINE REMOVE_ELECTRON_FROM_ADD_LIST(k)
      electron_to_add(k)%VX  = electron_to_add(N_e_to_add)%VX
      electron_to_add(k)%VY  = electron_to_add(N_e_to_add)%VY
      electron_to_add(k)%VZ  = electron_to_add(N_e_to_add)%VZ
+
+     electron_to_add(k)%AX  = electron_to_add(N_e_to_add)%AX !
+     electron_to_add(k)%AY  = electron_to_add(N_e_to_add)%AY !
+     electron_to_add(k)%AZ  = electron_to_add(N_e_to_add)%AZ !
+
      electron_to_add(k)%tag = electron_to_add(N_e_to_add)%tag
 
   END IF
@@ -971,12 +1203,18 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
 
   INTEGER k, n 
 
+  REAL(8) ax, ay, az
+
   IF (N_of_inner_objects.EQ.0) RETURN
 
 ! find, process, and exclude electrons which collided with inner objects
   k=0
   DO WHILE (k.LT.N_e_to_add)
      k = k+1
+
+     ax = electron_to_add(k)%AX
+     ay = electron_to_add(k)%AY
+     az = electron_to_add(k)%AZ
 
      IF (symmetry_plane_X_left) THEN
         IF (electron_to_add(k)%X.LT.c_X_area_min) THEN
@@ -1017,7 +1255,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
                  print '("error-1 in FIND_ALIENS_IN_ELECTRON_ADD_LIST")'
                  CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
               ELSE
-                 CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)                       
+                 CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)                       
               END IF
               CALL REMOVE_ELECTRON_FROM_ADD_LIST(k)  ! this subroutine does  N_e_to_add = N_e_to_add - 1 and k = k-1
            ELSE IF (electron_to_add(k)%Y.GT.c_Y_area_max) THEN
@@ -1028,7 +1266,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
                  print '("error-2 in FIND_ALIENS_IN_ELECTRON_ADD_LIST")'
                  CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
               ELSE
-                 CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
               END IF
               CALL REMOVE_ELECTRON_FROM_ADD_LIST(k)  ! this subroutine does  N_e_to_add = N_e_to_add - 1 and k = k-1
            END IF
@@ -1041,7 +1279,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
 
            IF (Rank_of_master_left.GE.0) THEN
 ! left neighbor cluster exists
-              CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+              CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
            ELSE
 ! left neighbor cluster does not exist
 !#              CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX,  electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)   ! left
@@ -1056,13 +1294,13 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
            SELECT CASE (c_left_bottom_corner_type)
               CASE (HAS_TWO_NEIGHBORS)
                  IF ((c_X_area_min-electron_to_add(k)%X).LT.(c_Y_area_min-electron_to_add(k)%Y)) THEN
-                    CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
                  ELSE
-                    CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
                  END IF
 
               CASE (FLAT_WALL_BELOW)
-                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
 
               CASE (FLAT_WALL_LEFT)
                  IF (electron_to_add(k)%Y.GE.c_Y_area_min) THEN                 
@@ -1071,7 +1309,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
                     print '("error-4 in FIND_ALIENS_IN_ELECTRON_ADD_LIST")'
                     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
                  ELSE
-                    CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)                       
+                    CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)                       
                  END IF
 
               CASE (SURROUNDED_BY_WALL)
@@ -1085,10 +1323,10 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
                  CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
 
               CASE (EMPTY_CORNER_WALL_LEFT)
-                 CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
 
               CASE (EMPTY_CORNER_WALL_BELOW)
-                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
 
            END SELECT
 
@@ -1098,13 +1336,13 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
            SELECT CASE (c_left_top_corner_type)
               CASE (HAS_TWO_NEIGHBORS)
                  IF ((c_X_area_min-electron_to_add(k)%X).LT.(electron_to_add(k)%Y-c_Y_area_max)) THEN
-                    CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
                  ELSE
-                    CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
                  END IF
 
               CASE (FLAT_WALL_ABOVE)
-                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
 
               CASE (FLAT_WALL_LEFT)
                  IF (electron_to_add(k)%Y.LE.c_Y_area_max) THEN                 
@@ -1113,7 +1351,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
                     print '("error-6 in FIND_ALIENS_IN_ELECTRON_ADD_LIST")'
                     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
                  ELSE
-                    CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
                  END IF
 
               CASE (SURROUNDED_BY_WALL)
@@ -1127,10 +1365,10 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
                  CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
 
               CASE (EMPTY_CORNER_WALL_LEFT)
-                 CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
 
               CASE (EMPTY_CORNER_WALL_ABOVE)
-                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
 
            END SELECT
         END IF
@@ -1152,7 +1390,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
                  print '("error-8 in FIND_ALIENS_IN_ELECTRON_ADD_LIST")'
                  CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
               ELSE
-                 CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)                       
+                 CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)                       
               END IF
               CALL REMOVE_ELECTRON_FROM_ADD_LIST(k)  ! this subroutine does  N_e_to_add = N_e_to_add - 1 and k = k-1
            ELSE IF (electron_to_add(k)%Y.GT.c_Y_area_max) THEN
@@ -1163,7 +1401,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
                  print '("error-9 in FIND_ALIENS_IN_ELECTRON_ADD_LIST")'
                  CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
               ELSE
-                 CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
               END IF
               CALL REMOVE_ELECTRON_FROM_ADD_LIST(k)  ! this subroutine does  N_e_to_add = N_e_to_add - 1 and k = k-1
            END IF
@@ -1176,7 +1414,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
 
            IF (Rank_of_master_right.GE.0) THEN
 ! right neighbor cluster exists
-              CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+              CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
            ELSE
 ! right neighbor cluster does not exist
 !              CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
@@ -1191,13 +1429,13 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
            SELECT CASE (c_right_bottom_corner_type)
               CASE (HAS_TWO_NEIGHBORS)
                  IF ((electron_to_add(k)%X-c_X_area_max).LT.(c_Y_area_min-electron_to_add(k)%Y)) THEN
-                    CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
                  ELSE
-                    CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
                  END IF
 
               CASE (FLAT_WALL_BELOW)
-                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
                 
               CASE (FLAT_WALL_RIGHT)
                  IF (electron_to_add(k)%Y.GE.c_Y_area_min) THEN
@@ -1206,7 +1444,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
                     print '("error-11 in FIND_ALIENS_IN_ELECTRON_ADD_LIST")'
                     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
                  ELSE
-                    CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)                       
+                    CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)                       
                  END IF
 
               CASE (SURROUNDED_BY_WALL)
@@ -1220,10 +1458,10 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
                     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
 
               CASE (EMPTY_CORNER_WALL_RIGHT)
-                 CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
 
               CASE (EMPTY_CORNER_WALL_BELOW)
-                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
 
            END SELECT
 
@@ -1233,13 +1471,13 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
            SELECT CASE (c_right_top_corner_type)
               CASE (HAS_TWO_NEIGHBORS)
                  IF ((electron_to_add(k)%X-c_X_area_max).LT.(electron_to_add(k)%Y-c_Y_area_max)) THEN
-                    CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
                  ELSE
-                    CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                    CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
                  END IF
 
               CASE (FLAT_WALL_ABOVE)
-                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
 
               CASE (FLAT_WALL_RIGHT)
                  IF (electron_to_add(k)%Y.LE.c_Y_area_max) THEN
@@ -1248,7 +1486,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
                     print '("error-13 in FIND_ALIENS_IN_ELECTRON_ADD_LIST")'
                     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
                  ELSE
-                    CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)                    
+                    CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)                    
                  END IF
 
               CASE (SURROUNDED_BY_WALL)
@@ -1262,10 +1500,10 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
                     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
 
               CASE (EMPTY_CORNER_WALL_RIGHT)
-                 CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
 
               CASE (EMPTY_CORNER_WALL_ABOVE)
-                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
 
            END SELECT
 
@@ -1281,7 +1519,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
         IF (periodic_boundary_X_left.AND.periodic_boundary_X_right) THEN
            IF (Rank_of_master_above.GE.0) THEN
 ! neighbor cluster above exists
-              CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+              CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
            ELSE
 !              CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
 ! error
@@ -1294,7 +1532,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
 
         IF (Rank_of_master_above.GE.0) THEN
 ! neighbor cluster above exists
-           CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+           CALL ADD_ELECTRON_TO_SEND_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
         ELSE
 ! neighbor cluster above does not exist
            IF ((electron_to_add(k)%X.GE.(c_X_area_min+1.0_8)).AND.(electron_to_add(k)%X.LE.(c_X_area_max-1.0_8))) THEN
@@ -1306,7 +1544,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
            ELSE IF (electron_to_add(k)%X.LT.(c_X_area_min+1.0_8)) THEN
 ! particle near the left top corner
               IF (c_left_top_corner_type.EQ.EMPTY_CORNER_WALL_ABOVE) THEN
-                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
               ELSE
 !                 CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
 ! error
@@ -1316,7 +1554,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
            ELSE IF (electron_to_add(k)%X.GT.(c_X_area_max-1.0_8)) THEN
 ! particle near the right top corner
               IF (c_right_top_corner_type.EQ.EMPTY_CORNER_WALL_ABOVE) THEN
-                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX,  electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX,  electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
               ELSE
 !                 CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
 ! error
@@ -1334,7 +1572,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
         IF (periodic_boundary_X_left.AND.periodic_boundary_X_right) THEN
            IF (Rank_of_master_below.GE.0) THEN
 ! neighbor cluster above exists
-              CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+              CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
            ELSE
 !              CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
 ! error
@@ -1347,7 +1585,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
 
         IF (Rank_of_master_below.GE.0) THEN
 ! neighbor cluster below exists, remove particle and prepare to send it to the neighbor below
-           CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+           CALL ADD_ELECTRON_TO_SEND_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
         ELSE
 ! neighbor cluster below does not exist
            IF ((electron_to_add(k)%X.GE.(c_X_area_min+1.0_8)).AND.(electron_to_add(k)%X.LE.(c_X_area_max-1.0_8))) THEN
@@ -1359,7 +1597,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
            ELSE IF (electron_to_add(k)%X.LT.(c_X_area_min+1.0_8)) THEN
 ! particle near the left bottom corner
               IF (c_left_bottom_corner_type.EQ.EMPTY_CORNER_WALL_BELOW) THEN
-                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_LEFT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
               ELSE
 !                 CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
 ! error
@@ -1369,7 +1607,7 @@ SUBROUTINE FIND_ALIENS_IN_ELECTRON_ADD_LIST
            ELSE IF (electron_to_add(k)%X.GT.(c_X_area_max-1.0_8)) THEN
 ! particle near the right bottom corner
               IF (c_right_bottom_corner_type.EQ.EMPTY_CORNER_WALL_BELOW) THEN
-                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
+                 CALL ADD_ELECTRON_TO_SEND_RIGHT(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, ax,ay,az, electron_to_add(k)%tag)
               ELSE
 !                 CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_BELOW(electron_to_add(k)%X, electron_to_add(k)%Y, electron_to_add(k)%VX, electron_to_add(k)%VY, electron_to_add(k)%VZ, electron_to_add(k)%tag)
 ! error
@@ -1397,6 +1635,7 @@ SUBROUTINE FIND_INNER_OBJECT_COLL_IN_ELECTRON_ADD_LIST
   IMPLICIT NONE
 
   INTEGER k, n 
+  REAL(8) X_move, Y_move
 
   IF (N_of_inner_objects.EQ.0) RETURN
 
@@ -1410,11 +1649,16 @@ SUBROUTINE FIND_INNER_OBJECT_COLL_IN_ELECTRON_ADD_LIST
         IF (electron_to_add(k)%Y.LE.whole_object(n)%Ymin) CYCLE
         IF (electron_to_add(k)%Y.GE.whole_object(n)%Ymax) CYCLE
 ! collision detected
+!        write(*,*) "TRY 1"
+        X_move = electron_to_add(k)%VX * delta_t_factor
+        Y_move = electron_to_add(k)%VY * delta_t_factor
         CALL TRY_ELECTRON_COLL_WITH_INNER_OBJECT( electron_to_add(k)%X, &
                                                 & electron_to_add(k)%Y, &
                                                 & electron_to_add(k)%VX, &
                                                 & electron_to_add(k)%VY, &
                                                 & electron_to_add(k)%VZ, &
+                                                & X_move, &
+                                                & Y_move, &
                                                 & electron_to_add(k)%tag) !, &
 !                                                & whole_object(n) )
         CALL REMOVE_ELECTRON_FROM_ADD_LIST(k)  ! this subroutine does  N_e_to_add = N_e_to_add - 1 and k = k-1
@@ -1437,23 +1681,26 @@ SUBROUTINE PROCESS_ADDED_ELECTRONS
 
   IMPLICIT NONE
 
-  TYPE particle
+  TYPE particle_9
      real(8) X
      real(8) Y
      real(8) VX
      real(8) VY
      real(8) VZ
+     real(8) AX
+     real(8) AY
+     real(8) AZ
      integer tag
-  END TYPE particle
+  END TYPE particle_9
 
-  TYPE(particle), ALLOCATABLE :: bufer(:)
+  TYPE(particle_9), ALLOCATABLE :: bufer(:)
 
   INTEGER ALLOC_ERR
   INTEGER k, current_N
 
   INTEGER random_j
   INTEGER temptag
-  REAL(8) tempX, tempY, tempVX, tempVY, tempVZ
+  REAL(8) tempX, tempY, tempVX, tempVY, tempVZ, tempAX, tempAY, tempAZ
   
   IF (N_e_to_add.GT.(max_N_electrons-N_electrons)) THEN
 ! increase the size of the main electron array
@@ -1465,6 +1712,11 @@ SUBROUTINE PROCESS_ADDED_ELECTRONS
         bufer(k)%VX  = electron(k)%VX
         bufer(k)%VY  = electron(k)%VY
         bufer(k)%VZ  = electron(k)%VZ
+
+        bufer(k)%AX  = electron(k)%AX !
+        bufer(k)%AY  = electron(k)%AY !
+        bufer(k)%AZ  = electron(k)%AZ !
+
         bufer(k)%tag = electron(k)%tag
      END DO
      DEALLOCATE(electron, STAT=ALLOC_ERR)
@@ -1476,6 +1728,11 @@ SUBROUTINE PROCESS_ADDED_ELECTRONS
         electron(k)%VX  = bufer(k)%VX
         electron(k)%VY  = bufer(k)%VY
         electron(k)%VZ  = bufer(k)%VZ
+
+        electron(k)%AX  = bufer(k)%AX !
+        electron(k)%AY  = bufer(k)%AY !
+        electron(k)%AZ  = bufer(k)%AZ !
+
         electron(k)%tag = bufer(k)%tag
      END DO
      DEALLOCATE(bufer, STAT=ALLOC_ERR)
@@ -1487,6 +1744,11 @@ SUBROUTINE PROCESS_ADDED_ELECTRONS
      electron(k+N_electrons)%VX  = electron_to_add(k)%VX
      electron(k+N_electrons)%VY  = electron_to_add(k)%VY
      electron(k+N_electrons)%VZ  = electron_to_add(k)%VZ
+
+     electron(k+N_electrons)%AX  = electron_to_add(k)%AX !
+     electron(k+N_electrons)%AY  = electron_to_add(k)%AY !
+     electron(k+N_electrons)%AZ  = electron_to_add(k)%AZ !
+
      electron(k+N_electrons)%tag = electron_to_add(k)%tag
   END DO
 
@@ -1505,6 +1767,11 @@ SUBROUTINE PROCESS_ADDED_ELECTRONS
      tempVX  = electron(random_j)%VX
      tempVY  = electron(random_j)%VY
      tempVZ  = electron(random_j)%VZ
+
+     tempAX  = electron(random_j)%AX !
+     tempAY  = electron(random_j)%AY !
+     tempAZ  = electron(random_j)%AZ !
+
      temptag = electron(random_j)%tag
 
      electron(random_j)%X   = electron(k)%X
@@ -1512,6 +1779,11 @@ SUBROUTINE PROCESS_ADDED_ELECTRONS
      electron(random_j)%VX  = electron(k)%VX
      electron(random_j)%VY  = electron(k)%VY
      electron(random_j)%VZ  = electron(k)%VZ
+
+     electron(random_j)%AX  = electron(k)%AX !
+     electron(random_j)%AY  = electron(k)%AY !
+     electron(random_j)%AZ  = electron(k)%AZ !
+
      electron(random_j)%tag = electron(k)%tag
 
      electron(k)%X   = tempX
@@ -1519,6 +1791,11 @@ SUBROUTINE PROCESS_ADDED_ELECTRONS
      electron(k)%VX  = tempVX
      electron(k)%VY  = tempVY
      electron(k)%VZ  = tempVZ
+
+     electron(k)%AX  = tempAX !
+     electron(k)%AY  = tempAY !
+     electron(k)%AZ  = tempAZ !
+
      electron(k)%tag = temptag
   END DO
 
@@ -1557,7 +1834,7 @@ SUBROUTINE GATHER_ELECTRON_CHARGE_DENSITY
 
   REAL(8), ALLOCATABLE :: rbufer(:)
   INTEGER ALLOC_ERR
-  INTEGER bufsize
+  INTEGER bufsize, shift
 
 !  INTEGER npc   ! number of probe in a cluster list of probes
 !  INTEGER npa   ! number of probe in the global list of probes
@@ -1567,7 +1844,7 @@ SUBROUTINE GATHER_ELECTRON_CHARGE_DENSITY
   REAL(8) ax_ip1, ax_i, ay_jp1, ay_j
   REAL(8) vij, vip1j, vijp1
 
-  INTEGER pos
+  INTEGER pos, pos2
 
   INTEGER nio, position_flag
 ! function
@@ -1582,6 +1859,7 @@ SUBROUTINE GATHER_ELECTRON_CHARGE_DENSITY
      & (periodicity_flag.EQ.PERIODICITY_X_Y) ) &
      & THEN
      ALLOCATE(c_rho(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+!     ALLOCATE(c_rho_stream(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
   END IF
 
   n1 = c_indx_y_max - c_indx_y_min + 1
@@ -1596,18 +1874,19 @@ SUBROUTINE GATHER_ELECTRON_CHARGE_DENSITY
 
   DO k = 1, N_electrons
      
-     i = INT(electron(k)%X)
-     j = INT(electron(k)%Y)
+     i = FLOOR(electron(k)%X)
+     j = FLOOR(electron(k)%Y)
+
      IF (electron(k)%X.EQ.c_X_area_max) i = c_indx_x_max-1
      IF (electron(k)%Y.EQ.c_Y_area_max) j = c_indx_y_max-1
 
-if ((i.lt.c_indx_x_min).or.(i.gt.(c_indx_x_max-1)).or.(j.lt.c_indx_y_min).or.(j.gt.(c_indx_y_max-1))) then
-   print '("Process ",i4," : Error-1 in GATHER_ELECTRON_CHARGE_DENSITY : index out of bounds")', Rank_of_process
-   print '("Process ",i4," : k/N_electrons : ",i8,2x,i8)', Rank_of_process, k, N_electrons
-   print '("Process ",i4," : x/y/vx/vy/vz/tag : ",5(2x,e14.7),2x,i4)', Rank_of_process, electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag
-   print '("Process ",i4," : minx/maxx/miny/maxy : ",4(2x,e14.7))', Rank_of_process, c_X_area_min, c_X_area_max, c_Y_area_min, c_Y_area_max
-   CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
-end if
+     if ((i.lt.c_indx_x_min).or.(i.gt.(c_indx_x_max-1)).or.(j.lt.c_indx_y_min).or.(j.gt.(c_indx_y_max-1))) then
+        print '("Process ",i4," : Error-1 in GATHER_ELECTRON_CHARGE_DENSITY : index out of bounds")', Rank_of_process
+        print '("Process ",i4," : k/N_electrons : ",i8,2x,i8)', Rank_of_process, k, N_electrons
+        print '("Process ",i4," : x/y/vx/vy/vz/tag : ",5(2x,e14.7),2x,i4)', Rank_of_process, electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag
+        print '("Process ",i4," : minx/maxx/miny/maxy : ",4(2x,e14.7))', Rank_of_process, c_X_area_min, c_X_area_max, c_Y_area_min, c_Y_area_max
+        CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+     end if
 
 !     pos = i - c_indx_x_min + 1 + (j - c_indx_y_min) * (c_indx_x_max - c_indx_x_min + 1)
 
@@ -1626,9 +1905,10 @@ end if
      vip1j = ax_ip1 * ay_j
      vijp1 = ax_i   * ay_jp1
 
-if ((pos_i_j.gt.bufsize)) then
-   print '(2x,8(2x,i10))', Rank_of_process, bufsize, pos_i_j, i, j, k, n1, n2
-end if
+     if ((pos_i_j.gt.bufsize)) then
+        write (*,*) "OOPS"     
+        print '(2x,8(2x,i10))', Rank_of_process, bufsize, pos_i_j, i, j, k, n1, n2
+     end if
 
      rbufer(pos_i_j)     = rbufer(pos_i_j)     + vij                         !ax_i   * ay_j
      rbufer(pos_ip1_j)   = rbufer(pos_ip1_j)   + vip1j                       !ax_ip1 * ay_j
@@ -1667,6 +1947,7 @@ end if
         END DO
      END IF
 
+! exchange 1, with summation:
      IF (WHITE_CLUSTER) THEN  
 ! "white processes"
 
@@ -1717,7 +1998,7 @@ end if
         END IF
 
         IF (Rank_horizontal_below.GE.0) THEN
-! ## 7 ## receive from below densities in the vertical line above the bottom line
+! ## 7 ## receive from below densities in the horizontal line above the bottom line
            CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal_below, COMM_HORIZONTAL, stattus, ierr)
            DO i = c_indx_x_min, c_indx_x_max
               c_rho(i, c_indx_y_min+1) = c_rho(i, c_indx_y_min+1) + rbufer(i-c_indx_x_min+1)
@@ -1725,7 +2006,7 @@ end if
         END IF
 
         IF (Rank_horizontal_above.GE.0) THEN
-! ## 8 ## receive from above densities in the vertical line under the top line
+! ## 8 ## receive from above densities in the horizontal line under the top line
            CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal_above, COMM_HORIZONTAL, stattus, ierr)
            DO i = c_indx_x_min, c_indx_x_max
               c_rho(i, c_indx_y_max-1) = c_rho(i, c_indx_y_max-1) + rbufer(i-c_indx_x_min+1)
@@ -1770,7 +2051,7 @@ end if
         ALLOCATE(rbufer(1:n3), STAT=ALLOC_ERR)
 
         IF (Rank_horizontal_below.GE.0) THEN
-! ## 5 ## receive from below densities in the vertical line above the bottom line
+! ## 5 ## receive from below densities in the horizontal line above the bottom line
            CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal_below, COMM_HORIZONTAL, stattus, ierr)
            DO i = c_indx_x_min, c_indx_x_max
               c_rho(i, c_indx_y_min+1) = c_rho(i, c_indx_y_min+1) + rbufer(i-c_indx_x_min+1)
@@ -1778,7 +2059,7 @@ end if
         END IF
 
         IF (Rank_horizontal_above.GE.0) THEN
-! ## 6 ## receive from above densities in the vertical line under the top line
+! ## 6 ## receive from above densities in the horizontal line under the top line
            CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal_above, COMM_HORIZONTAL, stattus, ierr)
            DO i = c_indx_x_min, c_indx_x_max
               c_rho(i, c_indx_y_max-1) = c_rho(i, c_indx_y_max-1) + rbufer(i-c_indx_x_min+1)
@@ -1797,9 +2078,158 @@ end if
            CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
         END IF
 
-     END IF
+     END IF !black/white selection
+ 
+     CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
+!exchange 2, from inner nodes to edges
+!***now correct the densities on the edges by transferring the values from inner nodes of ovelapping clusters, need to get Chi 06/14/22
+     IF (WHITE_CLUSTER) THEN
+! "white processes"
 
-! adjust densities at the boundaries with material walls
+        IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
+        ALLOCATE(rbufer(1:n1), STAT=ALLOC_ERR)
+
+        IF (Rank_horizontal_right.GE.0) THEN
+! ## 09 ## send right densities to the left of the right edge
+           rbufer(1:n1) = c_rho(c_indx_x_max - 1, c_indx_y_min:c_indx_y_max)
+           CALL MPI_SEND(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, request, ierr)
+        END IF
+
+        IF (Rank_horizontal_left.GE.0) THEN
+! ## 10 ## send left densities to the right of the left edge
+           rbufer(1:n1) = c_rho(c_indx_x_min + 1, c_indx_y_min:c_indx_y_max)
+           CALL MPI_SEND(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, request, ierr)
+        END IF
+
+        IF (Rank_horizontal_left.GE.0) THEN
+! ## 11 ## receive from left densities for the left edge 
+           CALL MPI_RECV(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal_left, COMM_HORIZONTAL, stattus, ierr)
+           DO j = c_indx_y_min, c_indx_y_max
+              c_rho(c_indx_x_min, j) = rbufer(j-c_indx_y_min+1)
+           END DO
+        END IF
+
+        IF (Rank_horizontal_right.GE.0) THEN
+! ## 12 ## receive from right densities for the right edge
+           CALL MPI_RECV(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal_right, COMM_HORIZONTAL, stattus, ierr)
+           DO j = c_indx_y_min, c_indx_y_max
+              c_rho(c_indx_x_max, j) = rbufer(j-c_indx_y_min+1)
+           END DO
+        END IF
+
+        IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
+        ALLOCATE(rbufer(1:n3), STAT=ALLOC_ERR)
+
+        IF (Rank_horizontal_above.GE.0) THEN
+! ## 13 ## send up densities below the top edge
+           rbufer(1:n3) = c_rho(c_indx_x_min:c_indx_x_max, c_indx_y_max - 1)
+           CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, request, ierr)
+        END IF
+
+        IF (Rank_horizontal_below.GE.0) THEN
+! ## 14 ## send down densities above the bottom edge
+           rbufer(1:n3) = c_rho(c_indx_x_min:c_indx_x_max, c_indx_y_min + 1)
+           CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr)
+        END IF
+
+        IF (Rank_horizontal_below.GE.0) THEN
+! ## 15 ## receive from below densities for the bottom edge
+           CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal_below, COMM_HORIZONTAL, stattus, ierr)
+           DO i = c_indx_x_min, c_indx_x_max
+              c_rho(i, c_indx_y_min) = rbufer(i-c_indx_x_min+1)
+           END DO
+        END IF
+
+        IF (Rank_horizontal_above.GE.0) THEN
+! ## 16 ## receive from above densities for the top edge
+           CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal_above, COMM_HORIZONTAL, stattus, ierr)
+           DO i = c_indx_x_min, c_indx_x_max
+              c_rho(i, c_indx_y_max) = rbufer(i-c_indx_x_min+1)
+           END DO
+        END IF   
+
+     ELSE ! "black" cluster
+
+        IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
+        ALLOCATE(rbufer(1:n1), STAT=ALLOC_ERR)
+
+        IF (Rank_horizontal_left.GE.0) THEN
+! ## 09 ## receive from left densities for the left edge
+           CALL MPI_RECV(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal_left, COMM_HORIZONTAL, stattus, ierr)
+           DO j = c_indx_y_min, c_indx_y_max
+              c_rho(c_indx_x_min, j) = rbufer(j-c_indx_y_min+1)
+           END DO
+        END IF
+
+        IF (Rank_horizontal_right.GE.0) THEN
+! ## 10 ## receive from right densities for the right edge
+           CALL MPI_RECV(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal_right, COMM_HORIZONTAL, stattus, ierr)
+           DO j = c_indx_y_min, c_indx_y_max
+              c_rho(c_indx_x_max, j) = rbufer(j-c_indx_y_min+1)
+           END DO
+        END IF
+
+        IF (Rank_horizontal_right.GE.0) THEN
+! ## 11 ## send right densities to the left of the right edge
+           rbufer(1:n1) = c_rho(c_indx_x_max - 1, c_indx_y_min:c_indx_y_max)
+           CALL MPI_SEND(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, request, ierr)
+        END IF
+
+        IF (Rank_horizontal_left.GE.0) THEN
+! ## 12 ## send left densities to the right of the left edge
+           rbufer(1:n1) = c_rho(c_indx_x_min + 1, c_indx_y_min:c_indx_y_max)
+           CALL MPI_SEND(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, request, ierr)
+        END IF
+
+        IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
+        ALLOCATE(rbufer(1:n3), STAT=ALLOC_ERR)
+
+        IF (Rank_horizontal_below.GE.0) THEN
+! ## 13 ## receive from below densities for the bottom edge
+           CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal_below, COMM_HORIZONTAL, stattus, ierr)
+           DO i = c_indx_x_min, c_indx_x_max
+              c_rho(i, c_indx_y_min) = rbufer(i-c_indx_x_min+1)
+           END DO
+        END IF
+
+        IF (Rank_horizontal_above.GE.0) THEN
+! ## 14 ## receive from above densities for the top edge
+           CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal_above, COMM_HORIZONTAL, stattus, ierr)
+           DO i = c_indx_x_min, c_indx_x_max
+              c_rho(i, c_indx_y_max) = rbufer(i-c_indx_x_min+1)
+           END DO
+        END IF
+
+        IF (Rank_horizontal_above.GE.0) THEN
+! ## 15 ## send up densities below the top edge
+           rbufer(1:n3) = c_rho(c_indx_x_min:c_indx_x_max, c_indx_y_max - 1)
+           CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, request, ierr)
+        END IF
+
+        IF (Rank_horizontal_below.GE.0) THEN
+! ## 16 ## send down densities above the bottom edge
+           rbufer(1:n3) = c_rho(c_indx_x_min:c_indx_x_max, c_indx_y_min + 1)
+           CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr)
+        END IF
+
+     END IF ! for black/white selection for setting charge density at the edge 
+
+     IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
+
+     CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
+
+! save the unadjusted density on the master process
+!     DO i = c_indx_x_min, c_indx_x_max
+!        DO j = c_indx_y_min, c_indx_y_max
+!           c_rho_stream(i, j) = c_rho(i, j)
+!        END DO
+!     END DO
+
+!     IF (symmetry_plane_X_left) THEN
+!        c_rho_stream(c_indx_x_min, c_indx_y_min : c_indx_y_max) = 2.0_8 * c_rho_stream(c_indx_x_min, c_indx_y_min : c_indx_y_max)     
+!     END IF   
+
+! adjust densities c_rho at the boundaries with material walls
 
      IF (periodic_boundary_X_left.AND.periodic_boundary_X_right) THEN
 ! special case of self-connected X-periodic cluster
@@ -1815,9 +2245,9 @@ end if
            END DO
         END IF
 
-     ELSE
+     ELSE !self-periodicity check
  
-        IF (Rank_of_master_left.LT.0) THEN
+             IF (Rank_of_master_left.LT.0) THEN !includes symmetry line, if present
            DO j = c_indx_y_min+1, c_indx_y_max-1
               c_rho(c_indx_x_min, j) = 2.0_8 * c_rho(c_indx_x_min, j)
            END DO
@@ -1879,24 +2309,30 @@ end if
 
      END IF
 
-  END IF
+  END IF !field master selection
 
   IF ((periodicity_flag.EQ.PERIODICITY_NONE).OR.(periodicity_flag.EQ.PERIODICITY_X_PETSC).OR.(periodicity_flag.EQ.PERIODICITY_X_Y)) THEN
-
+! only PETSc solver handles the matrix that arises in the DI method
      IF (cluster_rank_key.EQ.0) THEN
 
-! prepare and send charge density to field calculators
+! prepare and send accumulated charge density to field calculators
         DO k = 2, cluster_N_blocks
-           bufsize = (field_calculator(k)%indx_x_max - field_calculator(k)%indx_x_min + 1) * &
-                   & (field_calculator(k)%indx_y_max - field_calculator(k)%indx_y_min + 1)
+
+           shift = (field_calculator(k)%indx_x_max - field_calculator(k)%indx_x_min + 1) * &
+                 & (field_calculator(k)%indx_y_max - field_calculator(k)%indx_y_min + 1)
+!           bufsize = 2 * shift
+           bufsize = shift
            IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
            ALLOCATE(rbufer(1:bufsize), STAT=ALLOC_ERR)
            pos=0
+!           pos2 = shift
            DO j = field_calculator(k)%indx_y_min, field_calculator(k)%indx_y_max
               DO i = field_calculator(k)%indx_x_min, field_calculator(k)%indx_x_max
-                 pos = pos+1
-                 rbufer(pos) = c_rho(i,j)
-
+                 pos = pos + 1
+!                 pos2 = pos2 + 1
+                 rbufer(pos)  = c_rho(i,j)
+!                 rbufer(pos2) = c_rho_stream(i,j) !streaming density NOT adjusted at any ext. boundaries other than the symmetry line
+!                 rbufer(pos2) = c_rho(i,j)
                  DO nio = N_of_boundary_objects+1, N_of_boundary_and_inner_objects
                     CALL CHECK_IF_INNER_OBJECT_CONTAINS_POINT(whole_object(nio), i, j, position_flag)
                     rbufer(pos) = rbufer(pos) - Get_Surface_Charge_Inner_Object(i, j, position_flag, whole_object(nio))
@@ -1920,10 +2356,12 @@ end if
            CALL MPI_SEND(rbufer, bufsize, MPI_DOUBLE_PRECISION, field_calculator(k)%rank, Rank_of_process, MPI_COMM_WORLD, request, ierr) 
         END DO
 
-! cluster master is a field calaculator too, prepare its own charge density
+! cluster master is a field calculator too, prepare its own charge density
         DO j = indx_y_min, indx_y_max
            DO i = indx_x_min, indx_x_max
               rho_e(i, j) = c_rho(i, j)
+!              rho_e_stream(i, j) = c_rho_stream(i, j) !save before adjusting for surface charge
+!              rho_e_stream(i, j) = c_rho(i, j)
 
               DO nio = N_of_boundary_objects+1, N_of_boundary_and_inner_objects
                  CALL CHECK_IF_INNER_OBJECT_CONTAINS_POINT(whole_object(nio), i, j, position_flag)
@@ -1946,30 +2384,59 @@ end if
            END DO
         END DO
 
-     ELSE
-
-        bufsize = (indx_x_max - indx_x_min + 1) * (indx_y_max - indx_y_min + 1)
+  ELSE ! nonzero rank within cluster:
+       
+        shift = (indx_x_max - indx_x_min + 1) * (indx_y_max - indx_y_min + 1)  
+!        bufsize = 2 * shift
+        bufsize = shift
         IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
         ALLOCATE(rbufer(1:bufsize), STAT=ALLOC_ERR)
         
         CALL MPI_RECV(rbufer, bufsize, MPI_DOUBLE_PRECISION, field_master, field_master, MPI_COMM_WORLD, stattus, ierr)
         
         pos = 0
+!        pos2 = shift
         DO j = indx_y_min, indx_y_max
            DO i = indx_x_min, indx_x_max
-              pos = pos+1
-              rho_e(i,j) = rbufer(pos)
+              pos = pos + 1
+!              pos2 = pos2 + 1
+              rho_e(i, j)        = rbufer(pos)
+!              rho_e_stream(i, j) = rbufer(pos2)
            END DO
         END DO
 
      END IF
      
   END IF
+
+! all processes:
+! Chi values at cell edge centers, interpolated:  
+  DO j = indx_y_min, indx_y_max 
+     DO i = indx_x_min + 1, indx_x_max
+!        Chi_left(i, j) = 0.5_8 * (rho_e_stream(i - 1, j) + rho_e_stream(i,j)) * Chi_factor
+        Chi_left(i, j) = 0.5_8 * (rho_e(i - 1, j) + rho_e(i, j)) * Chi_factor             
+!        Chi_left(i, j) = MAX(rho_e_stream(i - 1, j), rho_e_stream(i,j)) * Chi_factor !Langdon [1983]
+     END DO
+     Chi_left(indx_x_min, j)     = 0.0_8
+     Chi_left(indx_x_max + 1, j) = 0.0_8
+  END DO
+! ion density and Chi are collected before electron density; Chi is proportional to local plasma frequency for the species
+  DO i = indx_x_min, indx_x_max
+     DO j = indx_y_min + 1, indx_y_max  
+!        Chi_down(i, j) = 0.5_8 * (rho_e_stream(i, j - 1) + rho_e_stream(i,j)) * Chi_factor
+        Chi_down(i, j) = 0.5_8 * (rho_e(i, j - 1) + rho_e(i, j)) * Chi_factor     
+!        Chi_down(i, j) = MAX(rho_e_stream(i, j - 1), rho_e_stream(i,j)) * Chi_factor
+     END DO
+     Chi_down(i, indx_y_min)     = 0.0_8
+     Chi_down(i, indx_y_max + 1) = 0.0_8
+  END DO
+    
   
   IF (ALLOCATED(rbufer))  DEALLOCATE(rbufer,  STAT=ALLOC_ERR)
 
   IF ((cluster_rank_key.NE.0).OR.(periodicity_flag.EQ.PERIODICITY_NONE).OR.(periodicity_flag.EQ.PERIODICITY_X_PETSC).OR.(periodicity_flag.EQ.PERIODICITY_X_Y)) THEN
      IF (ALLOCATED(c_rho)) DEALLOCATE(c_rho, STAT=ALLOC_ERR)
+!     IF (ALLOCATED(c_rho_stream)) DEALLOCATE(c_rho_stream, STAT=ALLOC_ERR)
   END IF
 
 END SUBROUTINE GATHER_ELECTRON_CHARGE_DENSITY

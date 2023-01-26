@@ -43,6 +43,9 @@ SUBROUTINE GLOBAL_LOAD_BALANCE
   INTEGER total_part_number_in_bufer
   INTEGER       N_part_to_receive_from_proc(0:N_spec, 1:N_processes_cluster)
   INTEGER total_N_part_to_receive_from_proc(1:N_processes_cluster)
+  
+  INTEGER Length_to_receive(1:N_processes_cluster)
+  INTEGER Length_of_bufer, Length_to_send
 
   INTEGER total_new_part_number(0:N_spec)
   INTEGER new_size
@@ -57,7 +60,7 @@ SUBROUTINE GLOBAL_LOAD_BALANCE
   DO s = 1, N_spec
      eff_N_particles = eff_N_particles + N_ions(s)
   END DO
-  eff_N_particles = eff_N_particles / N_subcycles + N_electrons
+  eff_N_particles = eff_N_particles / N_subcycles + N_electrons 
 
   CALL MPI_REDUCE(eff_N_particles, eff_N_particles_cluster, 1, MPI_INTEGER, MPI_SUM, 0, COMM_CLUSTER, ierr)
 
@@ -142,22 +145,26 @@ SUBROUTINE GLOBAL_LOAD_BALANCE
      IF (N_processes_to_free_in_cluster.GT.0) THEN
 ! receive numbers of particles 
         total_part_number_in_bufer = 0
+        Length_of_bufer = 0
         DO n = N_processes_cluster-N_processes_to_free_in_cluster, N_processes_cluster-1
            CALL MPI_RECV(N_part_to_receive_from_proc(0:N_spec,n), N_spec+1, MPI_INTEGER, n, 0, COMM_CLUSTER, stattus, ierr)
            total_N_part_to_receive_from_proc(n) = N_part_to_receive_from_proc(0,n)
-           DO s = 1, N_spec
+           Length_to_receive(n) = 9 * N_part_to_receive_from_proc(0,n)
+           DO s = 1, N_spec !ions
               total_N_part_to_receive_from_proc(n) = total_N_part_to_receive_from_proc(n) + N_part_to_receive_from_proc(s,n)
+              Length_to_receive(n) = Length_to_receive(n) + 8 * N_part_to_receive_from_proc(s,n)
            END DO
            total_part_number_in_bufer = total_part_number_in_bufer + total_N_part_to_receive_from_proc(n)
+           Length_of_bufer = Length_of_bufer + Length_to_receive(n)
         END DO
-        ALLOCATE(rbufer(1:total_part_number_in_bufer*6), STAT=ALLOC_ERR)
+        ALLOCATE(rbufer(1 : Length_of_bufer), STAT=ALLOC_ERR)
         pos_end = 0
 ! receive particles
         DO n = N_processes_cluster-N_processes_to_free_in_cluster, N_processes_cluster-1
            IF (total_N_part_to_receive_from_proc(n).GT.0) THEN
               pos_begin = pos_end + 1
-              pos_end = pos_begin + total_N_part_to_receive_from_proc(n)*6 - 1
-              CALL MPI_RECV(rbufer(pos_begin:pos_end), total_N_part_to_receive_from_proc(n)*6, MPI_DOUBLE_PRECISION, n, n, COMM_CLUSTER, stattus, ierr)
+              pos_end = pos_begin + Length_to_receive(n) - 1
+              CALL MPI_RECV(rbufer(pos_begin:pos_end), Length_to_receive(n), MPI_DOUBLE_PRECISION, n, n, COMM_CLUSTER, stattus, ierr)
            END IF
         END DO
 ! add the newly received particles 
@@ -186,18 +193,23 @@ SUBROUTINE GLOBAL_LOAD_BALANCE
         DO n = N_processes_cluster-N_processes_to_free_in_cluster, N_processes_cluster-1
 ! electrons
            DO k = N_electrons+1, N_electrons + N_part_to_receive_from_proc(0,n)
-              electron(k)%X   =     rbufer(i)
+              electron(k)%X   =     rbufer(i+0)
               electron(k)%Y   =     rbufer(i+1)
               electron(k)%VX  =     rbufer(i+2)
               electron(k)%VY  =     rbufer(i+3)
               electron(k)%VZ  =     rbufer(i+4)
-              electron(k)%tag = INT(rbufer(i+5))
-              i = i + 6
+
+              electron(k)%AX  =     rbufer(i+5) !
+              electron(k)%AY  =     rbufer(i+6) !
+              electron(k)%AZ  =     rbufer(i+7) !
+
+              electron(k)%tag = INT(rbufer(i+8))
+              i = i + 9
 
               if ( (electron(k)%X.lt.c_X_area_min).or. &
-                   & (electron(k)%X.gt.c_X_area_max).or. &
-                   & (electron(k)%Y.lt.c_Y_area_min).or. &
-                   & (electron(k)%Y.gt.c_Y_area_max) ) then
+                 & (electron(k)%X.gt.c_X_area_max).or. &
+                 & (electron(k)%Y.lt.c_Y_area_min).or. &
+                 & (electron(k)%Y.gt.c_Y_area_max) ) then
                  print '("Process ",i4," : Error-1 in GLOBAL_LOAD_BALANCE : particle out of bounds xmin/xmax/ymin/ymax : ",4(2x,e14.7))', Rank_of_process, c_X_area_min, c_X_area_max, c_Y_area_min, c_Y_area_max
                  print '("Process ",i4," : k/N_electrons : ",i8,2x,i8)', Rank_of_process, k, N_electrons
                  print '("Process ",i4," : x/y/vx/vy/vz/tag : ",5(2x,e14.7),2x,i4)', Rank_of_process, electron(k)%X, electron(k)%Y, electron(k)%VX, electron(k)%VY, electron(k)%VZ, electron(k)%tag
@@ -209,18 +221,20 @@ SUBROUTINE GLOBAL_LOAD_BALANCE
 ! ions
            DO s = 1, N_spec
               DO k = N_ions(s)+1, N_ions(s) + N_part_to_receive_from_proc(s,n)
-                 ion(s)%part(k)%X   =     rbufer(i)
+                 ion(s)%part(k)%X   =     rbufer(i+0)
                  ion(s)%part(k)%Y   =     rbufer(i+1)
                  ion(s)%part(k)%VX  =     rbufer(i+2)
                  ion(s)%part(k)%VY  =     rbufer(i+3)
                  ion(s)%part(k)%VZ  =     rbufer(i+4)
-                 ion(s)%part(k)%tag = INT(rbufer(i+5))
-                 i = i + 6
+                 ion(s)%part(k)%AX =      rbufer(i+5) !
+                 ion(s)%part(k)%AY =      rbufer(i+6) !
+                 ion(s)%part(k)%tag = INT(rbufer(i+7))
+                 i = i + 8
                  
                  if ( (ion(s)%part(k)%X.lt.c_X_area_min).or. &
-                      & (ion(s)%part(k)%X.gt.c_X_area_max).or. &
-                      & (ion(s)%part(k)%Y.lt.c_Y_area_min).or. &
-                      & (ion(s)%part(k)%Y.gt.c_Y_area_max) ) then
+                    & (ion(s)%part(k)%X.gt.c_X_area_max).or. &
+                    & (ion(s)%part(k)%Y.lt.c_Y_area_min).or. &
+                    & (ion(s)%part(k)%Y.gt.c_Y_area_max) ) then
                     print '("Process ",i4," : Error-2 in GLOBAL_LOAD_BALANCE : particle out of bounds xmin/xmax/ymin/ymax : ",4(2x,e14.7))', Rank_of_process, c_X_area_min, c_X_area_max, c_Y_area_min, c_Y_area_max
                     print '("Process ",i4," : s/k/N_ions : ",i8,2x,i8,2x,i8)', Rank_of_process, s, k, N_ions(s)
                     print '("Process ",i4," : x/y/vx/vy/vz/tag : ",5(2x,e14.7),2x,i4)', Rank_of_process, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag
@@ -252,37 +266,44 @@ print '("MASTER MESSAGE :: Rank_of_process ",i4," Rank_cluster ",i4," particle_m
         CALL MPI_SEND(ibufer(0:N_spec), N_spec+1, MPI_INTEGER, 0, 0, COMM_CLUSTER, request, ierr) 
         DEALLOCATE(ibufer, STAT=ALLOC_ERR)
         sum_N_part_to_send = N_electrons
+        Length_to_send = 9 * N_electrons
         DO s = 1, N_spec
            sum_N_part_to_send = sum_N_part_to_send + N_ions(s)
+           Length_to_send = Length_to_send + 8 * N_ions(s)
         END DO
 ! send particles
         IF (sum_N_part_to_send.GT.0) THEN
-           ALLOCATE(rbufer(1:sum_N_part_to_send*6), STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1 : Length_to_send), STAT=ALLOC_ERR)
 ! place electrons first
            i=1
            DO k = 1, N_electrons
-              rbufer(i) = electron(k)%X
+              rbufer(i+0) = electron(k)%X
               rbufer(i+1) = electron(k)%Y
               rbufer(i+2) = electron(k)%VX
               rbufer(i+3) = electron(k)%VY
               rbufer(i+4) = electron(k)%VZ
-              rbufer(i+5) = DBLE(electron(k)%tag)
-              i = i + 6
+              rbufer(i+5) = electron(k)%AX !
+              rbufer(i+6) = electron(k)%AY !
+              rbufer(i+7) = electron(k)%AZ !
+              rbufer(i+8) = DBLE(electron(k)%tag) 
+              i = i + 9
            END DO
 ! place ions
            DO s = 1, N_spec
               DO k = 1, N_ions(s)
-                 rbufer(i)   = ion(s)%part(k)%X
+                 rbufer(i+0)   = ion(s)%part(k)%X
                  rbufer(i+1) = ion(s)%part(k)%Y
                  rbufer(i+2) = ion(s)%part(k)%VX
                  rbufer(i+3) = ion(s)%part(k)%VY
                  rbufer(i+4) = ion(s)%part(k)%VZ
-                 rbufer(i+5) = DBLE(ion(s)%part(k)%tag)
-                 i = i+6
+                 rbufer(i+5) = ion(s)%part(k)%AX !
+                 rbufer(i+6) = ion(s)%part(k)%AY !
+                 rbufer(i+7) = DBLE(ion(s)%part(k)%tag)
+                 i = i + 8
               END DO
            END DO
 ! send particles
-           CALL MPI_SEND(rbufer, sum_N_part_to_send*6, MPI_DOUBLE_PRECISION, 0, Rank_cluster, COMM_CLUSTER, request, ierr)     
+           CALL MPI_SEND(rbufer, Length_to_send, MPI_DOUBLE_PRECISION, 0, Rank_cluster, COMM_CLUSTER, request, ierr)     
            DEALLOCATE(rbufer, STAT=ALLOC_ERR)
         END IF
 ! clear the counters
@@ -570,7 +591,7 @@ SUBROUTINE BALANCE_LOAD_WITHIN_CLUSTER
   INTEGER m, k, s
   INTEGER avg_N_particles(0:N_spec)
   INTEGER N_to_distribute(0:N_spec)
-  INTEGER total_N_to_distribute
+  INTEGER total_N_to_distribute, Length_to_distribute
   INTEGER distr_pos(0:N_spec)
   INTEGER max_distr_pos(0:N_spec)
 
@@ -624,31 +645,39 @@ SUBROUTINE BALANCE_LOAD_WITHIN_CLUSTER
         END DO
      END DO
 
-! calaculate total number of particles to be acquired
+! calculate total number of particles to be acquired
      total_N_to_distribute = N_to_distribute(0)
+     Length_to_distribute = 9 *  N_to_distribute(0)
      DO s = 1, N_spec
         total_N_to_distribute = total_N_to_distribute + N_to_distribute(s)
+        Length_to_distribute = Length_to_distribute + 8 * N_to_distribute(s)
      END DO
 
 ! create a buffer of proper size where all particles to distribute will be temporary stored
-     ALLOCATE(rbufer(1:6*total_N_to_distribute), STAT=ALLOC_ERR)
+     ALLOCATE(rbufer(1 : Length_to_distribute), STAT=ALLOC_ERR)
 
 ! if the master process has excessive number of particles, move them to the buffer
 ! prepare start positions for each species
      distr_pos(0) = 1
-     DO s = 1, N_spec
-        distr_pos(s) = distr_pos(s-1) + 6*N_to_distribute(s-1)
-     END DO
+     distr_pos(1) = 1 + 9 * N_to_distribute(0)
+     IF(N_spec.ge.2)THEN
+        DO s = 2, N_spec
+           distr_pos(s) = distr_pos(s-1) + 8 * N_to_distribute(s-1)
+        END DO
+     END IF   
 ! electrons
      IF (N_electrons.GT.avg_N_particles(0)) THEN
         DO k = avg_N_particles(0)+1, N_electrons
-           rbufer(distr_pos(0))   = electron(k)%X
+           rbufer(distr_pos(0)+0) = electron(k)%X
            rbufer(distr_pos(0)+1) = electron(k)%Y
            rbufer(distr_pos(0)+2) = electron(k)%VX
            rbufer(distr_pos(0)+3) = electron(k)%VY
            rbufer(distr_pos(0)+4) = electron(k)%VZ
-           rbufer(distr_pos(0)+5) = electron(k)%tag
-           distr_pos(0) = distr_pos(0)+6
+           rbufer(distr_pos(0)+5) = electron(k)%AX !
+           rbufer(distr_pos(0)+6) = electron(k)%AY !
+           rbufer(distr_pos(0)+7) = electron(k)%AZ !
+           rbufer(distr_pos(0)+8) = electron(k)%tag
+           distr_pos(0) = distr_pos(0) + 9
         END DO
         N_electrons = avg_N_particles(0)
      END IF
@@ -656,13 +685,15 @@ SUBROUTINE BALANCE_LOAD_WITHIN_CLUSTER
      DO s = 1, N_spec
         IF (N_ions(s).GT.avg_N_particles(s)) THEN
            DO k = avg_N_particles(s)+1, N_ions(s)
-              rbufer(distr_pos(s))   = ion(s)%part(k)%X
+              rbufer(distr_pos(s)+0) = ion(s)%part(k)%X
               rbufer(distr_pos(s)+1) = ion(s)%part(k)%Y
               rbufer(distr_pos(s)+2) = ion(s)%part(k)%VX
               rbufer(distr_pos(s)+3) = ion(s)%part(k)%VY
               rbufer(distr_pos(s)+4) = ion(s)%part(k)%VZ
-              rbufer(distr_pos(s)+5) = ion(s)%part(k)%tag
-              distr_pos(s) = distr_pos(s)+6
+              rbufer(distr_pos(s)+5) = ion(s)%part(k)%AX
+              rbufer(distr_pos(s)+6) = ion(s)%part(k)%AY
+              rbufer(distr_pos(s)+7) = ion(s)%part(k)%tag
+              distr_pos(s) = distr_pos(s) + 8
            END DO
            N_ions(s) = avg_N_particles(s)
         END IF
@@ -675,11 +706,12 @@ SUBROUTINE BALANCE_LOAD_WITHIN_CLUSTER
      DO m = 1, N_processes_cluster-1
         DO s = 0, N_spec
            IF (N_particles_spec_proc(s,m).LE.avg_N_particles(s)) CYCLE
-           message_size = 6 * (N_particles_spec_proc(s,m) - avg_N_particles(s))
+           message_size = 8 * (N_particles_spec_proc(s,m) - avg_N_particles(s))
+           IF(s.eq.0) message_size = 9 * (N_particles_spec_proc(s,m) - avg_N_particles(s))
            pos1 = distr_pos(s)
-           pos2 = distr_pos(s)+message_size-1
+           pos2 = distr_pos(s) + message_size - 1
 
-           CALL MPI_PROBE(m, m+SHIFT1+s, COMM_CLUSTER, stattus, ierr)
+           CALL MPI_PROBE(m, m + SHIFT1 + s, COMM_CLUSTER, stattus, ierr)
            CALL MPI_GET_COUNT(stattus, MPI_DOUBLE_PRECISION, probed_message_size, ierr)
            IF (message_size.NE.probed_message_size) THEN
               PRINT '("Proc ",i4," :: Error-1 in BALANCE_LOAD_WITHIN_CLUSTER :: ",2x,i4,2x,i8,2x,i8,2x,i2)', &
@@ -695,13 +727,17 @@ SUBROUTINE BALANCE_LOAD_WITHIN_CLUSTER
 ! send particles to calculators where the number of particles is lower than the balanced value
 ! at this time, the rbufer is full, so we need to reset the starting positions
      distr_pos(0) = 1
-     DO s = 1, N_spec
-        distr_pos(s) = distr_pos(s-1) + 6*N_to_distribute(s-1)
-     END DO
+     distr_pos(1) = 1 + 9 * N_to_distribute(0)
+     IF(N_spec.ge.2) THEN
+        DO s = 2, N_spec ! was s = 1, N_spec 07/02/22
+           distr_pos(s) = distr_pos(s-1) + 8 * N_to_distribute(s-1)
+        END DO
+     END IF   
      DO m = 1, N_processes_cluster-1
         DO s = 0, N_spec
            IF (avg_N_particles(s).LE.N_particles_spec_proc(s,m)) CYCLE
-           message_size = 6 * (avg_N_particles(s) - N_particles_spec_proc(s,m))
+           message_size = 8 * (avg_N_particles(s) - N_particles_spec_proc(s,m))
+           IF(s.eq.0) message_size = 9 * (avg_N_particles(s) - N_particles_spec_proc(s,m))
            pos1 = distr_pos(s)
            pos2 = distr_pos(s)+message_size-1
            CALL MPI_SEND(rbufer(pos1:pos2), message_size, MPI_DOUBLE_PRECISION, m, s, COMM_CLUSTER, ierr)     
@@ -713,50 +749,54 @@ SUBROUTINE BALANCE_LOAD_WITHIN_CLUSTER
 ! these particles must be assigned to the master process
 
 ! prepare maximal values of index for each species
-     max_distr_pos(0) = 6 * N_to_distribute(0)
+     max_distr_pos(0) = 9 * N_to_distribute(0)
      DO s = 1, N_spec
-        max_distr_pos(s) = max_distr_pos(s-1) + 6 * N_to_distribute(s)
+        max_distr_pos(s) = max_distr_pos(s-1) + 8 * N_to_distribute(s)
      END DO
-
 ! electrons
      IF (distr_pos(0).LT.max_distr_pos(0)) THEN
-        delta_N = (max_distr_pos(0)-distr_pos(0)+1)/6
+        delta_N = (max_distr_pos(0)-distr_pos(0)+1) / 9
 ! check and resize if necessary the size of the electron array
         IF ((N_electrons+delta_N).GT.max_N_electrons) THEN
            new_size = INT(MAX(1.05*REAL(N_electrons+delta_N), REAL(N_electrons+delta_N)+50))
            CALL RESIZE_ELECTRON_ARRAY(new_size)   ! sets max_N_electrons = new_size
         END IF
         DO k = N_electrons+1, N_electrons+delta_N
-           electron(k)%X   =     rbufer(distr_pos(0))
+           electron(k)%X   =     rbufer(distr_pos(0)+0)
            electron(k)%Y   =     rbufer(distr_pos(0)+1)
            electron(k)%VX  =     rbufer(distr_pos(0)+2)
            electron(k)%VY  =     rbufer(distr_pos(0)+3)
            electron(k)%VZ  =     rbufer(distr_pos(0)+4)
-           electron(k)%tag = INT(rbufer(distr_pos(0)+5))
-           distr_pos(0) = distr_pos(0) + 6
+           electron(k)%AX  =     rbufer(distr_pos(0)+5) !
+           electron(k)%AY  =     rbufer(distr_pos(0)+6) !
+           electron(k)%AZ  =     rbufer(distr_pos(0)+7) !
+           electron(k)%tag = INT(rbufer(distr_pos(0)+8))
+           distr_pos(0) = distr_pos(0) + 9
         END DO
-        N_electrons = N_electrons+delta_N
+        N_electrons = N_electrons + delta_N
      END IF
 
 ! ions 
      DO s = 1, N_spec
         IF (distr_pos(s).LT.max_distr_pos(s)) THEN
-           delta_N = (max_distr_pos(s)-distr_pos(s)+1)/6
+           delta_N = (max_distr_pos(s)-distr_pos(s)+1) / 8
 ! check and resize if necessary the size of the electron array
            IF ((N_ions(s)+delta_N).GT.max_N_ions(s)) THEN
               new_size = INT(MAX(1.05*REAL(N_ions(s)+delta_N), REAL(N_ions(s)+delta_N+50)))
               CALL RESIZE_ION_ARRAY(s, new_size)   ! sets max_N_ions(s) = new_size                     !### bug found, was RESIZE_ION_ARRAY(new_size)
            END IF
            DO k = N_ions(s)+1, N_ions(s)+delta_N
-              ion(s)%part(k)%X   =     rbufer(distr_pos(s))
+              ion(s)%part(k)%X   =     rbufer(distr_pos(s)+0)
               ion(s)%part(k)%Y   =     rbufer(distr_pos(s)+1)
               ion(s)%part(k)%VX  =     rbufer(distr_pos(s)+2)
               ion(s)%part(k)%VY  =     rbufer(distr_pos(s)+3)
               ion(s)%part(k)%VZ  =     rbufer(distr_pos(s)+4)
-              ion(s)%part(k)%tag = INT(rbufer(distr_pos(s)+5))
-              distr_pos(s) = distr_pos(s) + 6
+              ion(s)%part(k)%AX  =     rbufer(distr_pos(s)+5)
+              ion(s)%part(k)%AY  =     rbufer(distr_pos(s)+6)
+              ion(s)%part(k)%tag = INT(rbufer(distr_pos(s)+7))
+              distr_pos(s) = distr_pos(s) + 8
            END DO
-           N_ions(s) = N_ions(s)+delta_N
+           N_ions(s) = N_ions(s) + delta_N
         END IF
      END DO
 
@@ -774,17 +814,20 @@ SUBROUTINE BALANCE_LOAD_WITHIN_CLUSTER
 
 ! send extra electrons, if applicable
      IF (N_electrons.GT.avg_N_particles(0)) THEN
-        message_size = 6 * (N_electrons - avg_N_particles(0))
-        ALLOCATE(rbufer(1:message_size), STAT=ALLOC_ERR)
+        message_size = 9 * (N_electrons - avg_N_particles(0))
+        ALLOCATE(rbufer(1 : message_size), STAT=ALLOC_ERR)
         ibuf = 1
         DO k = avg_N_particles(0)+1, N_electrons
-           rbufer(ibuf)   =      electron(k)%X
+           rbufer(ibuf+0) =      electron(k)%X
            rbufer(ibuf+1) =      electron(k)%Y
            rbufer(ibuf+2) =      electron(k)%VX
            rbufer(ibuf+3) =      electron(k)%VY
            rbufer(ibuf+4) =      electron(k)%VZ
-           rbufer(ibuf+5) = DBLE(electron(k)%tag)
-           ibuf = ibuf + 6
+           rbufer(ibuf+5) =      electron(k)%AX !
+           rbufer(ibuf+6) =      electron(k)%AY !
+           rbufer(ibuf+7) =      electron(k)%AZ !
+           rbufer(ibuf+8) = DBLE(electron(k)%tag)
+           ibuf = ibuf + 9
         END DO
         N_electrons = avg_N_particles(0)
         CALL MPI_SEND(rbufer, message_size, MPI_DOUBLE_PRECISION, 0, Rank_cluster+SHIFT1+0, COMM_CLUSTER, ierr)
@@ -794,17 +837,19 @@ SUBROUTINE BALANCE_LOAD_WITHIN_CLUSTER
 ! send extra ions if applicable
      DO s = 1, N_spec
         IF (N_ions(s).GT.avg_N_particles(s)) THEN
-           message_size = 6 * (N_ions(s) - avg_N_particles(s))
+           message_size = 8 * (N_ions(s) - avg_N_particles(s))
            ALLOCATE(rbufer(1:message_size), STAT=ALLOC_ERR)
            ibuf = 1
            DO k = avg_N_particles(s)+1, N_ions(s)
-              rbufer(ibuf)   =      ion(s)%part(k)%X
+              rbufer(ibuf+0) =      ion(s)%part(k)%X
               rbufer(ibuf+1) =      ion(s)%part(k)%Y
               rbufer(ibuf+2) =      ion(s)%part(k)%VX
               rbufer(ibuf+3) =      ion(s)%part(k)%VY
               rbufer(ibuf+4) =      ion(s)%part(k)%VZ
-              rbufer(ibuf+5) = DBLE(ion(s)%part(k)%tag)
-              ibuf = ibuf + 6
+              rbufer(ibuf+5) =      ion(s)%part(k)%AX !
+              rbufer(ibuf+6) =      ion(s)%part(k)%AY !
+              rbufer(ibuf+7) = DBLE(ion(s)%part(k)%tag)
+              ibuf = ibuf + 8
            END DO
            N_ions(s) = avg_N_particles(s)
            CALL MPI_SEND(rbufer, message_size, MPI_DOUBLE_PRECISION, 0, Rank_cluster+SHIFT1+s, COMM_CLUSTER, ierr)
@@ -819,7 +864,7 @@ SUBROUTINE BALANCE_LOAD_WITHIN_CLUSTER
            new_size = INT(MAX(1.05*REAL(avg_N_particles(0)), REAL(avg_N_particles(0)+50)))
            CALL RESIZE_ELECTRON_ARRAY(new_size)
         END IF
-        message_size = 6 * (avg_N_particles(0) - N_electrons)
+        message_size = 9 * (avg_N_particles(0) - N_electrons)
 
         CALL MPI_PROBE(0, 0, COMM_CLUSTER, stattus, ierr)
         CALL MPI_GET_COUNT(stattus, MPI_DOUBLE_PRECISION, probed_message_size, ierr)
@@ -833,13 +878,16 @@ SUBROUTINE BALANCE_LOAD_WITHIN_CLUSTER
         CALL MPI_RECV(rbufer, message_size, MPI_DOUBLE_PRECISION, 0, 0, COMM_CLUSTER, stattus, ierr)
         ibuf = 1
         DO k = N_electrons+1, avg_N_particles(0)
-           electron(k)%X   =     rbufer(ibuf)
+           electron(k)%X   =     rbufer(ibuf+0)
            electron(k)%Y   =     rbufer(ibuf+1)
            electron(k)%VX  =     rbufer(ibuf+2)
            electron(k)%VY  =     rbufer(ibuf+3)
            electron(k)%VZ  =     rbufer(ibuf+4)
-           electron(k)%tag = INT(rbufer(ibuf+5))
-           ibuf = ibuf + 6
+           electron(k)%AX  =     rbufer(ibuf+5) !
+           electron(k)%AY  =     rbufer(ibuf+6) !
+           electron(k)%AZ  =     rbufer(ibuf+7) !
+           electron(k)%tag = INT(rbufer(ibuf+8))
+           ibuf = ibuf + 9
         END DO
         N_electrons = avg_N_particles(0)
         DEALLOCATE(rbufer, STAT=ALLOC_ERR)
@@ -853,7 +901,7 @@ SUBROUTINE BALANCE_LOAD_WITHIN_CLUSTER
               new_size = INT(MAX(1.05*REAL(avg_N_particles(s)), REAL(avg_N_particles(s)+50)))
               CALL RESIZE_ION_ARRAY(s, new_size)
            END IF
-           message_size = 6 * (avg_N_particles(s) - N_ions(s))
+           message_size = 8 * (avg_N_particles(s) - N_ions(s))
 
            CALL MPI_PROBE(0, s, COMM_CLUSTER, stattus, ierr)
            CALL MPI_GET_COUNT(stattus, MPI_DOUBLE_PRECISION, probed_message_size, ierr)
@@ -867,13 +915,15 @@ SUBROUTINE BALANCE_LOAD_WITHIN_CLUSTER
            CALL MPI_RECV(rbufer, message_size, MPI_DOUBLE_PRECISION, 0, s, COMM_CLUSTER, stattus, ierr)
            ibuf = 1
            DO k = N_ions(s)+1, avg_N_particles(s)
-              ion(s)%part(k)%X   =     rbufer(ibuf)
+              ion(s)%part(k)%X   =     rbufer(ibuf+0)
               ion(s)%part(k)%Y   =     rbufer(ibuf+1)
               ion(s)%part(k)%VX  =     rbufer(ibuf+2)
               ion(s)%part(k)%VY  =     rbufer(ibuf+3)
               ion(s)%part(k)%VZ  =     rbufer(ibuf+4)
-              ion(s)%part(k)%tag = INT(rbufer(ibuf+5))
-              ibuf = ibuf + 6
+              ion(s)%part(k)%AX  =     rbufer(ibuf+5) !
+              ion(s)%part(k)%AY  =     rbufer(ibuf+6) !
+              ion(s)%part(k)%tag = INT(rbufer(ibuf+7))
+              ibuf = ibuf + 8
            END DO
            N_ions(s) = avg_N_particles(s)
            DEALLOCATE(rbufer, STAT=ALLOC_ERR)
@@ -916,16 +966,21 @@ SUBROUTINE RESIZE_ELECTRON_ARRAY(new_size)
 
   INTEGER N_part_to_save
 
-  TYPE particle
+  TYPE particle_9
      real(8) X
      real(8) Y
      real(8) VX
      real(8) VY
      real(8) VZ
-     integer tag
-  END TYPE particle
 
-  TYPE(particle), ALLOCATABLE :: bufer(:)
+     real(8) AX !
+     real(8) AY !
+     real(8) AZ !
+
+     integer tag
+  END TYPE particle_9
+
+  TYPE(particle_9), ALLOCATABLE :: bufer(:)
 
   INTEGER ALLOC_ERR, DEALLOC_ERR
   INTEGER k
@@ -940,6 +995,11 @@ SUBROUTINE RESIZE_ELECTRON_ARRAY(new_size)
      bufer(k)%VX  = electron(k)%VX
      bufer(k)%VY  = electron(k)%VY
      bufer(k)%VZ  = electron(k)%VZ
+
+     bufer(k)%AX  = electron(k)%AX !
+     bufer(k)%AY  = electron(k)%AY !
+     bufer(k)%AZ  = electron(k)%AZ !
+
      bufer(k)%tag = electron(k)%tag
   END DO
 
@@ -955,6 +1015,11 @@ SUBROUTINE RESIZE_ELECTRON_ARRAY(new_size)
      electron(k)%VX  = bufer(k)%VX
      electron(k)%VY  = bufer(k)%VY
      electron(k)%VZ  = bufer(k)%VZ
+
+     electron(k)%AX  = bufer(k)%AX !
+     electron(k)%AY  = bufer(k)%AY !
+     electron(k)%AZ  = bufer(k)%AZ !
+
      electron(k)%tag = bufer(k)%tag
   END DO
 
@@ -979,16 +1044,20 @@ SUBROUTINE RESIZE_ION_ARRAY(s, new_size)
 
   INTEGER N_part_to_save
 
-  TYPE particle
+  TYPE particle_8
      real(8) X
      real(8) Y
      real(8) VX
      real(8) VY
      real(8) VZ
-     integer tag
-  END TYPE particle
 
-  TYPE(particle), ALLOCATABLE :: bufer(:)
+     real(8) AX !
+     real(8) AY !
+
+     integer tag
+  END TYPE particle_8
+
+  TYPE(particle_8), ALLOCATABLE :: bufer(:)
 
   INTEGER ALLOC_ERR, DEALLOC_ERR
   INTEGER k
@@ -1003,6 +1072,10 @@ SUBROUTINE RESIZE_ION_ARRAY(s, new_size)
      bufer(k)%VX  = ion(s)%part(k)%VX
      bufer(k)%VY  = ion(s)%part(k)%VY
      bufer(k)%VZ  = ion(s)%part(k)%VZ
+
+     bufer(k)%AX  = ion(s)%part(k)%AX !
+     bufer(k)%AY  = ion(s)%part(k)%AY !
+
      bufer(k)%tag = ion(s)%part(k)%tag
   END DO
 
@@ -1019,6 +1092,10 @@ SUBROUTINE RESIZE_ION_ARRAY(s, new_size)
      ion(s)%part(k)%VX  = bufer(k)%VX
      ion(s)%part(k)%VY  = bufer(k)%VY
      ion(s)%part(k)%VZ  = bufer(k)%VZ
+
+     ion(s)%part(k)%AX  = bufer(k)%AX !
+     ion(s)%part(k)%AY  = bufer(k)%AY !
+
      ion(s)%part(k)%tag = bufer(k)%tag
   END DO
 

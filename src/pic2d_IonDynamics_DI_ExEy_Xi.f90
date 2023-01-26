@@ -1,6 +1,6 @@
 !---------------------------------------
 !
-SUBROUTINE ADVANCE_IONS
+SUBROUTINE ADVANCE_IONS(final_step_flag)
 
   USE ParallelOperationValues
   USE CurrentProblemValues
@@ -14,24 +14,33 @@ SUBROUTINE ADVANCE_IONS
   INTEGER ierr
 
   INTEGER s, k
-  INTEGER i, j
-  REAL(8) ax_ip1, ax_i, ay_jp1, ay_j
+  INTEGER i, j, ix, iy, jx, jy
+  REAL(8) ax_ip1, ax_i, ax_jp1, ax_j
+  REAL(8) ay_ip1, ay_i, ay_jp1, ay_j
+  REAL(8) X_Ex, Y_Ey
   REAL(8) E_X, E_Y, E_Z
   REAL(8) alfa_x, alfa_y, alfa_z
   REAL(8) alfa_x2, alfa_y2, alfa_z2
   REAL(8) theta2, invtheta
   REAL(8) K11, K12, K13, K21, K22, K23, K31, K32, K33
+  REAL(8) A11, A12, A13, A21, A22, A23, A31, A32, A33 
   REAL(8) VX_minus, VY_minus, VZ_minus
   REAL(8) VX_plus, VY_plus, VZ_plus
+  REAL(8) ax, ay, dVx, dVy, dVz
+  REAL(8) X_minus, Y_minus, X_move, Y_move, Xtmp
+  REAL(8) vec1, vec2, vec3
+  REAL(8) Xarg, Yarg ! arguments for evaluating B(x, y), either current position, or pre-push
+  REAL(8) QM, QM2
 
   INTEGER n
+  LOGICAL final_step_flag
   LOGICAL collision_with_inner_object_occurred
 
 ! functions
   REAL(8) Bx, By, Bz, Ez
 
 ! clear counters of particles to be sent to neighbor processes
-  N_ions_to_send_left = 0
+  N_ions_to_send_left  = 0
   N_ions_to_send_right = 0
   N_ions_to_send_above = 0
   N_ions_to_send_below = 0
@@ -44,6 +53,8 @@ SUBROUTINE ADVANCE_IONS
 
 ! cycle over ion species
   DO s = 1, N_spec
+     QM2 = QM2s(s)
+     QM = 2.0_8 * QM2
 
 ! cycle over particles of the ion species
      k=0
@@ -63,8 +74,8 @@ SUBROUTINE ADVANCE_IONS
 
 ! interpolate electric field
 
-        i = INT(ion(s)%part(k)%X)
-        j = INT(ion(s)%part(k)%Y)
+        i = FLOOR(ion(s)%part(k)%X)
+        j = FLOOR(ion(s)%part(k)%Y)
 
         IF (ion(s)%part(k)%X.EQ.c_X_area_max) i = c_indx_x_max-1
         IF (ion(s)%part(k)%Y.EQ.c_Y_area_max) j = c_indx_y_max-1
@@ -77,28 +88,68 @@ SUBROUTINE ADVANCE_IONS
            CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
         end if
 
-        ax_ip1 = ion(s)%part(k)%X - DBLE(i)
+        X_minus = ion(s)%part(k)%X
+        Y_minus = ion(s)%part(k)%Y
+
+        Xarg = X_minus
+        Yarg = Y_minus
+
+! velocity prior to either the predictive push or the final push:
+        VX_minus = ion(s)%part(k)%VX
+        VY_minus = ion(s)%part(k)%VY
+        VZ_minus = ion(s)%part(k)%VZ
+
+        ax = ion(s)%part(k)%AX
+        ay = ion(s)%part(k)%AY
+
+! interpolate Ex and Ey:        
+!        ax_ip1 = X_minus - DBLE(i)
+!        ax_i   = 1.0_8 - ax_ip1
+
+!        ay_jp1 = Y_minus - DBLE(j)
+!        ay_j   = 1.0_8 - ay_jp1
+
+!        E_X = acc_EX(i, j) * ax_i * ay_j + acc_EX(i+1, j) * ax_ip1 * ay_j + acc_EX(i, j+1) * ax_i * ay_jp1 + acc_EX(i+1, j+1) * ax_ip1 * ay_jp1
+!        E_Y = acc_EY(i, j) * ax_i * ay_j + acc_EY(i+1, j) * ax_ip1 * ay_j + acc_EY(i, j+1) * ax_i * ay_jp1 + acc_EY(i+1, j+1) * ax_ip1 * ay_jp1        
+
+        ix = FLOOR(ion(s)%part(k)%X - 0.5_8)
+        jx = j
+        X_Ex = DBLE(ix) + 0.5_8
+
+        ax_ip1 = ion(s)%part(k)%X - X_Ex
         ax_i   = 1.0_8 - ax_ip1
+        ax_jp1 = ion(s)%part(k)%Y - DBLE(jx)
+        ax_j   = 1.0_8 - ax_jp1
+        E_X = acc_EX(ix, jx) * ax_i * ax_j + acc_EX(ix+1, jx) * ax_ip1 * ax_j + acc_EX(ix, jx+1) * ax_i * ax_jp1 + acc_EX(ix+1, jx+1) * ax_ip1 * ax_jp1
 
-        ay_jp1 = ion(s)%part(k)%Y - DBLE(j)
-        ay_j = 1.0_8 - ay_jp1
+        iy = i
+        jy = FLOOR(ion(s)%part(k)%Y - 0.5_8)
+        Y_Ey = DBLE(jy) + 0.5_8
 
-        E_X = acc_EX(i,j) * ax_i * ay_j + acc_EX(i+1,j) * ax_ip1 * ay_j + acc_EX(i,j+1) * ax_i * ay_jp1 + acc_EX(i+1,j+1) * ax_ip1 * ay_jp1   ! use accumulaed (averaged) electric fields
-        E_Y = acc_EY(i,j) * ax_i * ay_j + acc_EY(i+1,j) * ax_ip1 * ay_j + acc_EY(i,j+1) * ax_i * ay_jp1 + acc_EY(i+1,j+1) * ax_ip1 * ay_jp1   !
+        ay_ip1 = ion(s)%part(k)%X - DBLE(iy)
+        ay_i   = 1.0_8 - ay_ip1
+        ay_jp1 = ion(s)%part(k)%Y - Y_Ey
+        ay_j   = 1.0_8 - ay_jp1
+        E_Y = acc_EY(iy, jy) * ay_i * ay_j + acc_EY(iy+1, jy) * ay_ip1 * ay_j + acc_EY(iy, jy+1) * ay_i * ay_jp1 + acc_EY(iy+1, jy+1) * ay_ip1 * ay_jp1        
 
-        IF (ions_sense_Ez) THEN
-           E_Z = Ez(ion(s)%part(k)%X, ion(s)%part(k)%Y) * N_subcycles         ! Aug-3-2017 found a bug here, N_subcycles was missing
-        ELSE
-           E_Z = 0.0_8
+        IF (final_step_flag) THEN
+           Xarg = Xarg - VX_minus * delta_t_factor * N_subcycles !only used to evaluate mag. field from analyt. expressions
+           Yarg = Yarg - VY_minus * delta_t_factor * N_subcycles !
+        ELSE 
+           IF (ions_sense_Ez) THEN
+                E_Z = Ez(X_minus, Y_minus) * N_subcycles ! Aug-3-2017 found a bug here, N_subcycles was missing
+           ELSE
+                E_Z = 0.0_8
+           END IF
         END IF
-
+        
         IF (ions_sense_magnetic_field) THEN
 ! magnetic field accounted for
 ! calculate magnetic field factors   !##### MODIFY FOR IONS ########
 
-           alfa_x = QM2sNsub(s) * Bx(ion(s)%part(k)%X, ion(s)%part(k)%Y)
-           alfa_y = QM2sNsub(s) * By(ion(s)%part(k)%X, ion(s)%part(k)%Y)
-           alfa_z = QM2sNsub(s) * Bz(ion(s)%part(k)%X, ion(s)%part(k)%Y)
+           alfa_x = QM2 * Bx(Xarg, Yarg) * delta_t_factor * N_subcycles
+           alfa_y = QM2 * By(Xarg, Yarg) * delta_t_factor * N_subcycles
+           alfa_z = QM2 * Bz(Xarg, Yarg) * delta_t_factor * N_subcycles
 
            alfa_x2 = alfa_x**2
            alfa_y2 = alfa_y**2
@@ -107,60 +158,166 @@ SUBROUTINE ADVANCE_IONS
            theta2 = alfa_x2 + alfa_y2 + alfa_z2
            invtheta = 1.0_8 / (1.0_8 + theta2)
 
-           K11 = (1.0_8 - theta2 + 2.0_8 * alfa_x2) * invtheta
+           K11 =  (1.0_8 - theta2 + 2.0_8 * alfa_x2) * invtheta
            K12 =  2.0_8 * (alfa_x * alfa_y + alfa_z) * invtheta
            K13 =  2.0_8 * (alfa_x * alfa_z - alfa_y) * invtheta
 
            K21 =  2.0_8 * (alfa_x * alfa_y - alfa_z) * invtheta
-           K22 = (1.0_8 - theta2 + 2.0_8 * alfa_y2) * invtheta
+           K22 =  (1.0_8 - theta2 + 2.0_8 * alfa_y2) * invtheta
            K23 =  2.0_8 * (alfa_y * alfa_z + alfa_x) * invtheta
 
            K31 =  2.0_8 * (alfa_x * alfa_z + alfa_y) * invtheta
            K32 =  2.0_8 * (alfa_y * alfa_z - alfa_x) * invtheta
-           K33 = (1.0_8 - theta2 + 2.0_8 * alfa_z2) * invtheta
+           K33 =  (1.0_8 - theta2 + 2.0_8 * alfa_z2) * invtheta
+
+           A11 = 0.5_8 * (K11 + 1.0_8)
+           A12 = 0.5_8 * K12
+           A13 = 0.5_8 * K13
+
+           A21 = 0.5_8 * K21
+           A22 = 0.5_8 * (K22 + 1.0_8)
+           A23 = 0.5_8 * K23
+
+           A31 = 0.5_8 * K31
+           A32 = 0.5_8 * K32
+           A33 = 0.5_8 * (K33 + 1.0_8)
 
 !print *, K11*(K22*K33-K23*K32) - K12*(K21*K33-K23*K31) + K13*(K21*K32-K22*K31), E_X*E_scale_Vm
 
+           IF (.not.final_step_flag) THEN  ! perform predictive move
+
+! Gibbons & Hewett Eq.(2.6):
+              vec1 =  0.5_8 * ax  * delta_t_factor 
+              vec2 =  0.5_8 * ay  * delta_t_factor 
+              vec3 =     QM * E_Z * delta_t_factor 
+
+              VX_plus = K11 * VX_minus + K12 * VY_minus + K13 * VZ_minus + A11 * vec1 + A12 * vec2 + A13 * vec3
+              VY_plus = K21 * VX_minus + K22 * VY_minus + K23 * VZ_minus + A21 * vec1 + A22 * vec2 + A23 * vec3
+              VZ_plus = K31 * VX_minus + K32 * VY_minus + K33 * VZ_minus + A31 * vec1 + A32 * vec2 + A33 * vec3
+
+              ion(s)%part(k)%VX = VX_plus
+              ion(s)%part(k)%VY = VY_plus
+              ion(s)%part(k)%VZ = VZ_plus
+
+              X_move =  VX_plus * delta_t_factor * N_subcycles
+              Y_move =  VY_plus * delta_t_factor * N_subcycles
+
+              ion(s)%part(k)%X = X_minus + X_move
+              ion(s)%part(k)%Y = Y_minus + Y_move
+
+           END IF
+
+           IF (final_step_flag) THEN
+! Gibbons & Hewett Eq.(2.7)
+              dVx = QM2 * delta_t_factor * (A11 * E_X + A12 * E_Y) 
+              dVy = QM2 * delta_t_factor * (A21 * E_X + A22 * E_Y) 
+              dVz = QM2 * delta_t_factor * (A31 * E_X + A32 * E_Y)
+
+              ion(s)%part(k)%VX = VX_minus + dVx
+              ion(s)%part(k)%VY = VY_minus + dVy
+              ion(s)%part(k)%VZ = VZ_minus + dVz
+
+              X_move = dVx * delta_t_factor * N_subcycles
+              Y_move = dVy * delta_t_factor * N_subcycles
+
+              ion(s)%part(k)%X = X_minus + X_move
+              ion(s)%part(k)%Y = Y_minus + Y_move
+
+              ion(s)%part(k)%AX = 0.5_8 * (ax + QM * E_X)
+              ion(s)%part(k)%AY = 0.5_8 * (ay + QM * E_Y)              
+
+           END IF
+
+        ELSE ! ions do not sense mag. field
+           IF (.not.final_step_flag) THEN  ! predictive move
+
+! Gibbons & Hewett Eq.(2.6):
+              vec1 =   0.5_8 * ax  * delta_t_factor 
+              vec2 =   0.5_8 * ay  * delta_t_factor 
+              vec3 =      QM * E_Z * delta_t_factor 
+
+              VX_plus = VX_minus + vec1 
+              VY_plus = VY_minus + vec2 
+              VZ_plus = VZ_minus + vec3
+
+              ion(s)%part(k)%VX = VX_plus
+              ion(s)%part(k)%VY = VY_plus
+              ion(s)%part(k)%VZ = VZ_plus
+
+              X_move = VX_plus * delta_t_factor * N_subcycles
+              Y_move = VY_plus * delta_t_factor * N_subcycles
+
+              ion(s)%part(k)%X = X_minus + X_move
+              ion(s)%part(k)%Y = Y_minus + Y_move
+
+           END IF
+
+           IF (final_step_flag) THEN
+! Gibbons & Hewett Eq.(2.7)
+              dVx = QM2 * delta_t_factor * E_X 
+              dVy = QM2 * delta_t_factor * E_Y
+
+              ion(s)%part(k)%VX = VX_minus + dVx
+              ion(s)%part(k)%VY = VY_minus + dVy
+
+              X_move = dVx * delta_t_factor * N_subcycles
+              Y_move = dVy * delta_t_factor * N_subcycles
+
+              ion(s)%part(k)%X = X_minus + X_move
+              ion(s)%part(k)%Y = Y_minus + Y_move
+
+              ion(s)%part(k)%AX = 0.5_8 * (ax + QM * E_X)
+              ion(s)%part(k)%AY = 0.5_8 * (ay + QM * E_Y)
+           END IF
+     
+        END IF
+!        IF (ions_sense_magnetic_field) THEN
 ! velocity advance: first half-acceleration due to electric field
 
-           VX_minus = ion(s)%part(k)%VX + QM2s(s) * E_X
-           VY_minus = ion(s)%part(k)%VY + QM2s(s) * E_Y
-           VZ_minus = ion(s)%part(k)%VZ + QM2s(s) * E_Z
+!           VX_minus = ion(s)%part(k)%VX + QM2s(s) * E_X * delta_t_factor
+!           VY_minus = ion(s)%part(k)%VY + QM2s(s) * E_Y * delta_t_factor
+!           VZ_minus = ion(s)%part(k)%VZ + QM2s(s) * E_Z * delta_t_factor
 
 ! velocity advance: rotation in the magnetic field
 
-           VX_plus = K11 * VX_minus + K12 * VY_minus + K13 * VZ_minus
-           VY_plus = K21 * VX_minus + K22 * VY_minus + K23 * VZ_minus
-           VZ_plus = K31 * VX_minus + K32 * VY_minus + K33 * VZ_minus
-
+!           VX_plus = K11 * VX_minus + K12 * VY_minus + K13 * VZ_minus
+!           VY_plus = K21 * VX_minus + K22 * VY_minus + K23 * VZ_minus
+!           VZ_plus = K31 * VX_minus + K32 * VY_minus + K33 * VZ_minus
 ! velocity advance: second half-acceleration due to electric field
 
-           ion(s)%part(k)%VX = VX_plus + QM2s(s) * E_X
-           ion(s)%part(k)%VY = VY_plus + QM2s(s) * E_Y
-           ion(s)%part(k)%VZ = VZ_plus + QM2s(s) * E_Z
+!           ion(s)%part(k)%VX = VX_plus + QM2s(s) * E_X * delta_t_factor
+!           ion(s)%part(k)%VY = VY_plus + QM2s(s) * E_Y * delta_t_factor
+!           ion(s)%part(k)%VZ = VZ_plus + QM2s(s) * E_Z * delta_t_factor
 
-        ELSE
+!        ELSE
 ! magnetic field effects omitted
 ! velocity advance:  combine both half-accelerations, no magnetic field
+! delta_t_s is a half-step in this DI implementation
+!           ion(s)%part(k)%VX = ion(s)%part(k)%VX + delta_t_factor * (QM2s(s) + QM2s(s)) * E_X
+!           ion(s)%part(k)%VY = ion(s)%part(k)%VY + delta_t_factor * (QM2s(s) + QM2s(s)) * E_Y
+!           ion(s)%part(k)%VZ = ion(s)%part(k)%VZ + delta_t_factor * (QM2s(s) + QM2s(s)) * E_Z
 
-           ion(s)%part(k)%VX = ion(s)%part(k)%VX + (QM2s(s) + QM2s(s)) * E_X
-           ion(s)%part(k)%VY = ion(s)%part(k)%VY + (QM2s(s) + QM2s(s)) * E_Y
-           ion(s)%part(k)%VZ = ion(s)%part(k)%VZ + (QM2s(s) + QM2s(s)) * E_Z
-
-        END IF
+!        END IF
 
 ! coordinate advance
-
-        ion(s)%part(k)%X = ion(s)%part(k)%X + ion(s)%part(k)%VX * N_subcycles
-        ion(s)%part(k)%Y = ion(s)%part(k)%Y + ion(s)%part(k)%VY * N_subcycles
+!        X_move = delta_t_factor * ion(s)%part(k)%VX * N_subcycles
+!        Y_move = delta_t_factor * ion(s)%part(k)%VY * N_subcycles
+!        ion(s)%part(k)%X = ion(s)%part(k)%X + X_move
+!        ion(s)%part(k)%Y = ion(s)%part(k)%Y + Y_move
 
 ! a particle crossed symmetry plane, reflect it
         IF (symmetry_plane_X_left) THEN
            IF (ion(s)%part(k)%X.LT.c_X_area_min) THEN
+              Xtmp = ion(s)%part(k)%X - X_move !position before crossing symmetry line
               ion(s)%part(k)%X = MAX(c_X_area_min, c_X_area_min + c_X_area_min - ion(s)%part(k)%X)
               ion(s)%part(k)%VX = -ion(s)%part(k)%VX
+!!***06/12/22              ion(s)%part(k)%VZ = -ion(s)%part(k)%VZ
+              X_move = ion(s)%part(k)%X - Xtmp !updated X-move from previous to reflected position
            END IF
         END IF
+
+        ax = ion(s)%part(k)%AX
+        ay = ion(s)%part(k)%AY
 
 ! check whether a collision with an inner object occurred
         collision_with_inner_object_occurred = .FALSE.
@@ -170,7 +327,7 @@ SUBROUTINE ADVANCE_IONS
            IF (ion(s)%part(k)%Y.LE.whole_object(n)%Ymin) CYCLE
            IF (ion(s)%part(k)%Y.GE.whole_object(n)%Ymax) CYCLE
 ! collision detected
-           CALL TRY_ION_COLL_WITH_INNER_OBJECT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag) !, whole_object(n))
+           CALL TRY_ION_COLL_WITH_INNER_OBJECT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, X_move, Y_move, ion(s)%part(k)%tag) !, whole_object(n))
            CALL REMOVE_ION(s, k)  ! this subroutine does  N_ions(s) = N_ions(s) - 1 and k = k-1
            collision_with_inner_object_occurred = .TRUE.
            EXIT
@@ -199,7 +356,7 @@ SUBROUTINE ADVANCE_IONS
                  IF (Rank_of_master_below.LT.0) THEN
                     CALL PROCESS_ION_COLL_WITH_BOUNDARY_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
                  ELSE
-                    CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)                       
+                    CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)                       
                  END IF
                  CALL REMOVE_ION(s, k)  ! this subroutine does  N_ions(s) = N_ions(s) - 1 and k = k-1
               ELSE IF (ion(s)%part(k)%Y.GT.c_Y_area_max) THEN
@@ -207,7 +364,7 @@ SUBROUTINE ADVANCE_IONS
                  IF (Rank_of_master_above.LT.0) THEN
                     CALL PROCESS_ION_COLL_WITH_BOUNDARY_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
                  ELSE
-                    CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                  END IF
                  CALL REMOVE_ION(s, k)  ! this subroutine does  N_ions(s) = N_ions(s) - 1 and k = k-1
               END IF
@@ -220,7 +377,7 @@ SUBROUTINE ADVANCE_IONS
 
               IF (Rank_of_master_left.GE.0) THEN
 ! left neighbor cluster exists
-                 CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                 CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
               ELSE
 ! left neighbor cluster does not exist
                  CALL PROCESS_ION_COLL_WITH_BOUNDARY_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX,  ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)   ! left
@@ -232,19 +389,19 @@ SUBROUTINE ADVANCE_IONS
               SELECT CASE (c_left_bottom_corner_type)
                  CASE (HAS_TWO_NEIGHBORS)
                     IF ((c_X_area_min-ion(s)%part(k)%X).LT.(c_Y_area_min-ion(s)%part(k)%Y)) THEN
-                       CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                     ELSE
-                       CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                     END IF
 
                  CASE (FLAT_WALL_BELOW)
-                    CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
 
                  CASE (FLAT_WALL_LEFT)
                     IF (ion(s)%part(k)%Y.GE.c_Y_area_min) THEN                 
                        CALL PROCESS_ION_COLL_WITH_BOUNDARY_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
                     ELSE
-                       CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)                       
+                       CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)                       
                     END IF
 
                  CASE (SURROUNDED_BY_WALL)
@@ -255,10 +412,10 @@ SUBROUTINE ADVANCE_IONS
                     END IF
 
                  CASE (EMPTY_CORNER_WALL_LEFT)
-                    CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                
                  CASE (EMPTY_CORNER_WALL_BELOW)
-                    CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
 
               END SELECT
 
@@ -268,19 +425,19 @@ SUBROUTINE ADVANCE_IONS
               SELECT CASE (c_left_top_corner_type)
                  CASE (HAS_TWO_NEIGHBORS)
                     IF ((c_X_area_min-ion(s)%part(k)%X).LT.(ion(s)%part(k)%Y-c_Y_area_max)) THEN
-                       CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                     ELSE
-                       CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                     END IF
 
                  CASE (FLAT_WALL_ABOVE)
-                    CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
 
                  CASE (FLAT_WALL_LEFT)
                     IF (ion(s)%part(k)%Y.LE.c_Y_area_max) THEN                 
                        CALL PROCESS_ION_COLL_WITH_BOUNDARY_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
                     ELSE
-                       CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                     END IF
 
                  CASE (SURROUNDED_BY_WALL)
@@ -291,10 +448,10 @@ SUBROUTINE ADVANCE_IONS
                     END IF
 
                  CASE (EMPTY_CORNER_WALL_LEFT)
-                    CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
 
                  CASE (EMPTY_CORNER_WALL_ABOVE)
-                    CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
 
               END SELECT
 
@@ -320,7 +477,7 @@ SUBROUTINE ADVANCE_IONS
                  IF (Rank_of_master_below.LT.0) THEN
                     CALL PROCESS_ION_COLL_WITH_BOUNDARY_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
                  ELSE
-                    CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)                       
+                    CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)                       
                  END IF
                  CALL REMOVE_ION(s, k)  ! this subroutine does  N_ions(s) = N_ions(s) - 1 and k = k-1
               ELSE IF (ion(s)%part(k)%Y.GT.c_Y_area_max) THEN
@@ -328,7 +485,7 @@ SUBROUTINE ADVANCE_IONS
                  IF (Rank_of_master_above.LT.0) THEN
                     CALL PROCESS_ION_COLL_WITH_BOUNDARY_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
                  ELSE
-                    CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                  END IF
                  CALL REMOVE_ION(s, k)  ! this subroutine does  N_ions(s) = N_ions(s) - 1 and k = k-1
               END IF
@@ -341,7 +498,7 @@ SUBROUTINE ADVANCE_IONS
 
               IF (Rank_of_master_right.GE.0) THEN
 ! right neighbor cluster exists
-                 CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                 CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
               ELSE
 ! right neighbor cluster does not exist
                  CALL PROCESS_ION_COLL_WITH_BOUNDARY_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
@@ -353,19 +510,19 @@ SUBROUTINE ADVANCE_IONS
               SELECT CASE (c_right_bottom_corner_type)
                  CASE (HAS_TWO_NEIGHBORS)
                     IF ((ion(s)%part(k)%X-c_X_area_max).LT.(c_Y_area_min-ion(s)%part(k)%Y)) THEN
-                       CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                     ELSE
-                       CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                     END IF
 
                  CASE (FLAT_WALL_BELOW)
-                    CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                 
                  CASE (FLAT_WALL_RIGHT)
                     IF (ion(s)%part(k)%Y.GE.c_Y_area_min) THEN
                        CALL PROCESS_ION_COLL_WITH_BOUNDARY_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
                     ELSE
-                       CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)                       
+                       CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)                       
                     END IF
 
                  CASE (SURROUNDED_BY_WALL)
@@ -376,10 +533,10 @@ SUBROUTINE ADVANCE_IONS
                     END IF
 
                  CASE (EMPTY_CORNER_WALL_RIGHT)
-                    CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
 
                  CASE (EMPTY_CORNER_WALL_BELOW)
-                    CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
 
               END SELECT
 
@@ -389,19 +546,19 @@ SUBROUTINE ADVANCE_IONS
               SELECT CASE (c_right_top_corner_type)
                  CASE (HAS_TWO_NEIGHBORS)
                     IF ((ion(s)%part(k)%X-c_X_area_max).LT.(ion(s)%part(k)%Y-c_Y_area_max)) THEN
-                       CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                     ELSE
-                       CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                     END IF
 
                  CASE (FLAT_WALL_ABOVE)
-                    CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
 
                  CASE (FLAT_WALL_RIGHT)
                     IF (ion(s)%part(k)%Y.LE.c_Y_area_max) THEN
                        CALL PROCESS_ION_COLL_WITH_BOUNDARY_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
                     ELSE
-                       CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)                    
+                       CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)                    
                     END IF
 
                  CASE (SURROUNDED_BY_WALL)
@@ -412,10 +569,10 @@ SUBROUTINE ADVANCE_IONS
                     END IF
 
                  CASE (EMPTY_CORNER_WALL_RIGHT)
-                    CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
 
                  CASE (EMPTY_CORNER_WALL_ABOVE)
-                    CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
 
               END SELECT
 
@@ -437,7 +594,7 @@ SUBROUTINE ADVANCE_IONS
            IF (periodic_boundary_X_left.AND.periodic_boundary_X_right) THEN
               IF (Rank_of_master_above.GE.0) THEN
 ! neighbor cluster above exists
-                 CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                 CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
               ELSE
                  CALL PROCESS_ION_COLL_WITH_BOUNDARY_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
               END IF
@@ -447,7 +604,7 @@ SUBROUTINE ADVANCE_IONS
 
            IF (Rank_of_master_above.GE.0) THEN
 ! neighbor cluster above exists
-              CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+              CALL ADD_ION_TO_SEND_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
            ELSE
 ! neighbor cluster above does not exist
               IF ((ion(s)%part(k)%X.GE.(c_X_area_min+1.0_8)).AND.(ion(s)%part(k)%X.LE.(c_X_area_max-1.0_8))) THEN
@@ -456,14 +613,14 @@ SUBROUTINE ADVANCE_IONS
               ELSE IF (ion(s)%part(k)%X.LT.(c_X_area_min+1.0_8)) THEN
 ! particle near the left top corner
                  IF (c_left_top_corner_type.EQ.EMPTY_CORNER_WALL_ABOVE) THEN
-                    CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                  ELSE
                     CALL PROCESS_ION_COLL_WITH_BOUNDARY_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
                  END IF
               ELSE IF (ion(s)%part(k)%X.GT.(c_X_area_max-1.0_8)) THEN
 ! particle near the right top corner
                  IF (c_right_top_corner_type.EQ.EMPTY_CORNER_WALL_ABOVE) THEN
-                    CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX,  ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                  ELSE
                     CALL PROCESS_ION_COLL_WITH_BOUNDARY_ABOVE(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
                  END IF
@@ -478,7 +635,7 @@ SUBROUTINE ADVANCE_IONS
            IF (periodic_boundary_X_left.AND.periodic_boundary_X_right) THEN
               IF (Rank_of_master_below.GE.0) THEN
 ! neighbor cluster above exists
-                 CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                 CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
               ELSE
                  CALL PROCESS_ION_COLL_WITH_BOUNDARY_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
               END IF
@@ -488,7 +645,7 @@ SUBROUTINE ADVANCE_IONS
 
            IF (Rank_of_master_below.GE.0) THEN
 ! neighbor cluster below exists, remove particle and prepare to send it to the neighbor below
-              CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+              CALL ADD_ION_TO_SEND_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
            ELSE
 ! neighbor cluster below does not exist
               IF ((ion(s)%part(k)%X.GE.(c_X_area_min+1.0_8)).AND.(ion(s)%part(k)%X.LE.(c_X_area_max-1.0_8))) THEN
@@ -497,14 +654,14 @@ SUBROUTINE ADVANCE_IONS
               ELSE IF (ion(s)%part(k)%X.LT.(c_X_area_min+1.0_8)) THEN
 ! particle near the left bottom corner
                  IF (c_left_bottom_corner_type.EQ.EMPTY_CORNER_WALL_BELOW) THEN
-                    CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_LEFT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                  ELSE
                     CALL PROCESS_ION_COLL_WITH_BOUNDARY_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
                  END IF
               ELSE IF (ion(s)%part(k)%X.GT.(c_X_area_max-1.0_8)) THEN
 ! particle near the right bottom corner
                  IF (c_right_bottom_corner_type.EQ.EMPTY_CORNER_WALL_BELOW) THEN
-                    CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_RIGHT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ax, ay, ion(s)%part(k)%tag)
                  ELSE
                     CALL PROCESS_ION_COLL_WITH_BOUNDARY_BELOW(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag)
                  END IF
@@ -560,6 +717,10 @@ SUBROUTINE REMOVE_ION(s, k)
      ion(s)%part(k)%VX  = ion(s)%part(N_ions(s))%VX
      ion(s)%part(k)%VY  = ion(s)%part(N_ions(s))%VY
      ion(s)%part(k)%VZ  = ion(s)%part(N_ions(s))%VZ
+
+     ion(s)%part(k)%AX  = ion(s)%part(N_ions(s))%AX !
+     ion(s)%part(k)%AY  = ion(s)%part(N_ions(s))%AY !
+
      ion(s)%part(k)%tag = ion(s)%part(N_ions(s))%tag
 
   END IF
@@ -571,7 +732,7 @@ END SUBROUTINE REMOVE_ION
 
 !------------------------------------------
 !
-SUBROUTINE ADD_ION_TO_SEND_LEFT(s, x, y, vx, vy, vz, tag)
+SUBROUTINE ADD_ION_TO_SEND_LEFT(s, x, y, vx, vy, vz, ax, ay, tag)
 
   USE IonParticles , ONLY : N_ions_to_send_left, max_N_ions_to_send_left, ion_to_send_left
   USE ClusterAndItsBoundaries, ONLY : periodic_boundary_X_left, L_period_x
@@ -582,19 +743,21 @@ SUBROUTINE ADD_ION_TO_SEND_LEFT(s, x, y, vx, vy, vz, tag)
   IMPLICIT NONE
 
   INTEGER s
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay
   INTEGER tag
 
-  TYPE particle
+  TYPE particle_8
      real(8) X
      real(8) Y
      real(8) VX
      real(8) VY
      real(8) VZ
+     real(8) AX !
+     real(8) AY !
      integer tag
-  END TYPE particle
+  END TYPE particle_8
 
-  TYPE(particle), ALLOCATABLE :: bufer(:)
+  TYPE(particle_8), ALLOCATABLE :: bufer(:)
 
   INTEGER ALLOC_ERR, DEALLOC_ERR
   INTEGER k, current_N
@@ -611,6 +774,10 @@ SUBROUTINE ADD_ION_TO_SEND_LEFT(s, x, y, vx, vy, vz, tag)
         bufer(k)%VX  = ion_to_send_left(s)%part(k)%VX
         bufer(k)%VY  = ion_to_send_left(s)%part(k)%VY
         bufer(k)%VZ  = ion_to_send_left(s)%part(k)%VZ
+
+        bufer(k)%AX  = ion_to_send_left(s)%part(k)%AX !
+        bufer(k)%AY  = ion_to_send_left(s)%part(k)%AY !
+
         bufer(k)%tag = ion_to_send_left(s)%part(k)%tag
      END DO
      IF (ALLOCATED(ion_to_send_left(s)%part)) THEN 
@@ -625,6 +792,10 @@ SUBROUTINE ADD_ION_TO_SEND_LEFT(s, x, y, vx, vy, vz, tag)
         ion_to_send_left(s)%part(k)%VX  = bufer(k)%VX
         ion_to_send_left(s)%part(k)%VY  = bufer(k)%VY
         ion_to_send_left(s)%part(k)%VZ  = bufer(k)%VZ
+
+        ion_to_send_left(s)%part(k)%AX  = bufer(k)%AX !
+        ion_to_send_left(s)%part(k)%AY  = bufer(k)%AY !
+
         ion_to_send_left(s)%part(k)%tag = bufer(k)%tag
      END DO
      IF (ALLOCATED(bufer)) DEALLOCATE(bufer, STAT=DEALLOC_ERR)
@@ -639,6 +810,10 @@ SUBROUTINE ADD_ION_TO_SEND_LEFT(s, x, y, vx, vy, vz, tag)
   ion_to_send_left(s)%part(N_ions_to_send_left(s))%VX  = vx
   ion_to_send_left(s)%part(N_ions_to_send_left(s))%VY  = vy
   ion_to_send_left(s)%part(N_ions_to_send_left(s))%VZ  = vz
+
+  ion_to_send_left(s)%part(N_ions_to_send_left(s))%AX  = ax !
+  ion_to_send_left(s)%part(N_ions_to_send_left(s))%AY  = ay !
+
   ion_to_send_left(s)%part(N_ions_to_send_left(s))%tag = tag
 
 !print '("Process ",i4," called ADD_ION_TO_SEND_LEFT, T_cntr= ",i7)', Rank_of_process, T_cntr
@@ -647,7 +822,7 @@ END SUBROUTINE ADD_ION_TO_SEND_LEFT
 
 !------------------------------------------
 !
-SUBROUTINE ADD_ION_TO_SEND_RIGHT(s, x, y, vx, vy, vz, tag)
+SUBROUTINE ADD_ION_TO_SEND_RIGHT(s, x, y, vx, vy, vz, ax, ay, tag)
 
   USE IonParticles, ONLY : N_ions_to_send_right, max_N_ions_to_send_right, ion_to_send_right
   USE ClusterAndItsBoundaries, ONLY : periodic_boundary_X_right, L_period_x
@@ -658,19 +833,21 @@ SUBROUTINE ADD_ION_TO_SEND_RIGHT(s, x, y, vx, vy, vz, tag)
   IMPLICIT NONE
 
   INTEGER s
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay
   INTEGER tag
 
-  TYPE particle
+  TYPE particle_8
      real(8) X
      real(8) Y
      real(8) VX
      real(8) VY
      real(8) VZ
+     real(8) AX !
+     real(8) AY !
      integer tag
-  END TYPE particle
+  END TYPE particle_8
 
-  TYPE(particle), ALLOCATABLE :: bufer(:)
+  TYPE(particle_8), ALLOCATABLE :: bufer(:)
 
   INTEGER ALLOC_ERR, DEALLOC_ERR
   INTEGER k, current_N
@@ -687,6 +864,10 @@ SUBROUTINE ADD_ION_TO_SEND_RIGHT(s, x, y, vx, vy, vz, tag)
         bufer(k)%VX  = ion_to_send_right(s)%part(k)%VX
         bufer(k)%VY  = ion_to_send_right(s)%part(k)%VY
         bufer(k)%VZ  = ion_to_send_right(s)%part(k)%VZ
+
+        bufer(k)%AX  = ion_to_send_right(s)%part(k)%AX !
+        bufer(k)%AY  = ion_to_send_right(s)%part(k)%AY !
+
         bufer(k)%tag = ion_to_send_right(s)%part(k)%tag
      END DO
      IF (ALLOCATED(ion_to_send_right(s)%part)) THEN 
@@ -701,6 +882,10 @@ SUBROUTINE ADD_ION_TO_SEND_RIGHT(s, x, y, vx, vy, vz, tag)
         ion_to_send_right(s)%part(k)%VX  = bufer(k)%VX
         ion_to_send_right(s)%part(k)%VY  = bufer(k)%VY
         ion_to_send_right(s)%part(k)%VZ  = bufer(k)%VZ
+
+        ion_to_send_right(s)%part(k)%AX  = bufer(k)%AX !
+        ion_to_send_right(s)%part(k)%AY  = bufer(k)%AY !
+
         ion_to_send_right(s)%part(k)%tag = bufer(k)%tag
      END DO
      IF (ALLOCATED(bufer)) DEALLOCATE(bufer, STAT=DEALLOC_ERR)
@@ -715,6 +900,10 @@ SUBROUTINE ADD_ION_TO_SEND_RIGHT(s, x, y, vx, vy, vz, tag)
   ion_to_send_right(s)%part(N_ions_to_send_right(s))%VX  = vx
   ion_to_send_right(s)%part(N_ions_to_send_right(s))%VY  = vy
   ion_to_send_right(s)%part(N_ions_to_send_right(s))%VZ  = vz
+
+  ion_to_send_right(s)%part(N_ions_to_send_right(s))%AX  = ax !
+  ion_to_send_right(s)%part(N_ions_to_send_right(s))%AY  = ay !
+
   ion_to_send_right(s)%part(N_ions_to_send_right(s))%tag = tag
 
 !print '("Process ",i4," called ADD_ION_TO_SEND_RIGHT, T_cntr= ",i7)', Rank_of_process, T_cntr
@@ -723,7 +912,7 @@ END SUBROUTINE ADD_ION_TO_SEND_RIGHT
 
 !------------------------------------------
 !
-SUBROUTINE ADD_ION_TO_SEND_ABOVE(s, x, y, vx, vy, vz, tag)
+SUBROUTINE ADD_ION_TO_SEND_ABOVE(s, x, y, vx, vy, vz, ax, ay, tag)
 
   USE IonParticles, ONLY : N_ions_to_send_above, max_N_ions_to_send_above, ion_to_send_above
   USE ClusterAndItsBoundaries, ONLY : periodic_boundary_Y_above, L_period_y
@@ -734,19 +923,21 @@ SUBROUTINE ADD_ION_TO_SEND_ABOVE(s, x, y, vx, vy, vz, tag)
   IMPLICIT NONE
 
   INTEGER s
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay
   INTEGER tag
 
-  TYPE particle
+  TYPE particle_8
      real(8) X
      real(8) Y
      real(8) VX
      real(8) VY
      real(8) VZ
+     real(8) AX !
+     real(8) AY !
      integer tag
-  END TYPE particle
+  END TYPE particle_8
 
-  TYPE(particle), ALLOCATABLE :: bufer(:)
+  TYPE(particle_8), ALLOCATABLE :: bufer(:)
 
   INTEGER ALLOC_ERR, DEALLOC_ERR
   INTEGER k, current_N
@@ -763,6 +954,10 @@ SUBROUTINE ADD_ION_TO_SEND_ABOVE(s, x, y, vx, vy, vz, tag)
         bufer(k)%VX  = ion_to_send_above(s)%part(k)%VX
         bufer(k)%VY  = ion_to_send_above(s)%part(k)%VY
         bufer(k)%VZ  = ion_to_send_above(s)%part(k)%VZ
+
+        bufer(k)%AX  = ion_to_send_above(s)%part(k)%AX !
+        bufer(k)%AY  = ion_to_send_above(s)%part(k)%AY !
+
         bufer(k)%tag = ion_to_send_above(s)%part(k)%tag
      END DO
      IF (ALLOCATED(ion_to_send_above(s)%part)) THEN 
@@ -777,6 +972,10 @@ SUBROUTINE ADD_ION_TO_SEND_ABOVE(s, x, y, vx, vy, vz, tag)
         ion_to_send_above(s)%part(k)%VX  = bufer(k)%VX
         ion_to_send_above(s)%part(k)%VY  = bufer(k)%VY
         ion_to_send_above(s)%part(k)%VZ  = bufer(k)%VZ
+
+        ion_to_send_above(s)%part(k)%AX  = bufer(k)%AX !
+        ion_to_send_above(s)%part(k)%AY  = bufer(k)%AY !
+
         ion_to_send_above(s)%part(k)%tag = bufer(k)%tag
      END DO
      IF (ALLOCATED(bufer)) DEALLOCATE(bufer, STAT=DEALLOC_ERR)
@@ -791,6 +990,10 @@ SUBROUTINE ADD_ION_TO_SEND_ABOVE(s, x, y, vx, vy, vz, tag)
   ion_to_send_above(s)%part(N_ions_to_send_above(s))%VX  = vx
   ion_to_send_above(s)%part(N_ions_to_send_above(s))%VY  = vy
   ion_to_send_above(s)%part(N_ions_to_send_above(s))%VZ  = vz
+
+  ion_to_send_above(s)%part(N_ions_to_send_above(s))%AX  = ax !
+  ion_to_send_above(s)%part(N_ions_to_send_above(s))%AY  = ay !
+
   ion_to_send_above(s)%part(N_ions_to_send_above(s))%tag = tag
 
 !print '("Process ",i4," called ADD_ION_TO_SEND_ABOVE, T_cntr= ",i7)', Rank_of_process, T_cntr
@@ -799,7 +1002,7 @@ END SUBROUTINE ADD_ION_TO_SEND_ABOVE
 
 !------------------------------------------
 !
-SUBROUTINE ADD_ION_TO_SEND_BELOW(s, x, y, vx, vy, vz, tag)
+SUBROUTINE ADD_ION_TO_SEND_BELOW(s, x, y, vx, vy, vz, ax, ay, tag)
 
   USE IonParticles, ONLY : N_ions_to_send_below, max_N_ions_to_send_below, ion_to_send_below
   USE ClusterAndItsBoundaries, ONLY : periodic_boundary_Y_below, L_period_y
@@ -810,19 +1013,21 @@ SUBROUTINE ADD_ION_TO_SEND_BELOW(s, x, y, vx, vy, vz, tag)
   IMPLICIT NONE
 
   INTEGER s
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay
   INTEGER tag
 
-  TYPE particle
+  TYPE particle_8
      real(8) X
      real(8) Y
      real(8) VX
      real(8) VY
      real(8) VZ
+     real(8) AX !
+     real(8) AY !
      integer tag
-  END TYPE particle
+  END TYPE particle_8
 
-  TYPE(particle), ALLOCATABLE :: bufer(:)
+  TYPE(particle_8), ALLOCATABLE :: bufer(:)
 
   INTEGER ALLOC_ERR, DEALLOC_ERR
   INTEGER k, current_N
@@ -839,6 +1044,10 @@ SUBROUTINE ADD_ION_TO_SEND_BELOW(s, x, y, vx, vy, vz, tag)
         bufer(k)%VX  = ion_to_send_below(s)%part(k)%VX
         bufer(k)%VY  = ion_to_send_below(s)%part(k)%VY
         bufer(k)%VZ  = ion_to_send_below(s)%part(k)%VZ
+
+        bufer(k)%AX  = ion_to_send_below(s)%part(k)%AX !
+        bufer(k)%AY  = ion_to_send_below(s)%part(k)%AY !
+
         bufer(k)%tag = ion_to_send_below(s)%part(k)%tag
      END DO
      IF (ALLOCATED(ion_to_send_below(s)%part)) THEN 
@@ -853,6 +1062,10 @@ SUBROUTINE ADD_ION_TO_SEND_BELOW(s, x, y, vx, vy, vz, tag)
         ion_to_send_below(s)%part(k)%VX  = bufer(k)%VX
         ion_to_send_below(s)%part(k)%VY  = bufer(k)%VY
         ion_to_send_below(s)%part(k)%VZ  = bufer(k)%VZ
+
+        ion_to_send_below(s)%part(k)%AX  = bufer(k)%AX !
+        ion_to_send_below(s)%part(k)%AY  = bufer(k)%AY !
+
         ion_to_send_below(s)%part(k)%tag = bufer(k)%tag
      END DO
      IF (ALLOCATED(bufer)) DEALLOCATE(bufer, STAT=DEALLOC_ERR)
@@ -867,6 +1080,10 @@ SUBROUTINE ADD_ION_TO_SEND_BELOW(s, x, y, vx, vy, vz, tag)
   ion_to_send_below(s)%part(N_ions_to_send_below(s))%VX  = vx
   ion_to_send_below(s)%part(N_ions_to_send_below(s))%VY  = vy
   ion_to_send_below(s)%part(N_ions_to_send_below(s))%VZ  = vz
+
+  ion_to_send_below(s)%part(N_ions_to_send_below(s))%AX  = ax !
+  ion_to_send_below(s)%part(N_ions_to_send_below(s))%AY  = ay !
+
   ion_to_send_below(s)%part(N_ions_to_send_below(s))%tag = tag
 
 !print '("Process ",i4," called ADD_ION_TO_SEND_BELOW, T_cntr= ",i7)', Rank_of_process, T_cntr
@@ -875,26 +1092,28 @@ END SUBROUTINE ADD_ION_TO_SEND_BELOW
 
 !----------------------------------------
 !
-SUBROUTINE ADD_ION_TO_ADD_LIST(s, x, y, vx, vy, vz, tag)
+SUBROUTINE ADD_ION_TO_ADD_LIST(s, x, y, vx, vy, vz, ax, ay, tag)
 
   USE IonParticles, ONLY : N_ions_to_add, max_N_ions_to_add, ion_to_add
 
   IMPLICIT NONE
 
   INTEGER s
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay
   INTEGER tag
 
-  TYPE particle
+  TYPE particle_8
      real(8) X
      real(8) Y
      real(8) VX
      real(8) VY
      real(8) VZ
+     real(8) AX !
+     real(8) AY !
      integer tag
-  END TYPE particle
+  END TYPE particle_8
 
-  TYPE(particle), ALLOCATABLE :: bufer(:)
+  TYPE(particle_8), ALLOCATABLE :: bufer(:)
 
   INTEGER ALLOC_ERR, DEALLOC_ERR
   INTEGER k, current_N
@@ -911,6 +1130,10 @@ SUBROUTINE ADD_ION_TO_ADD_LIST(s, x, y, vx, vy, vz, tag)
         bufer(k)%VX  = ion_to_add(s)%part(k)%VX
         bufer(k)%VY  = ion_to_add(s)%part(k)%VY
         bufer(k)%VZ  = ion_to_add(s)%part(k)%VZ
+        
+        bufer(k)%AX  = ion_to_add(s)%part(k)%AX !
+        bufer(k)%AY  = ion_to_add(s)%part(k)%AY !
+
         bufer(k)%tag = ion_to_add(s)%part(k)%tag
      END DO
      IF (ALLOCATED(ion_to_add(s)%part)) DEALLOCATE(ion_to_add(s)%part, STAT=DEALLOC_ERR)
@@ -922,6 +1145,10 @@ SUBROUTINE ADD_ION_TO_ADD_LIST(s, x, y, vx, vy, vz, tag)
         ion_to_add(s)%part(k)%VX  = bufer(k)%VX
         ion_to_add(s)%part(k)%VY  = bufer(k)%VY
         ion_to_add(s)%part(k)%VZ  = bufer(k)%VZ
+
+        ion_to_add(s)%part(k)%AX  = bufer(k)%AX !
+        ion_to_add(s)%part(k)%AY  = bufer(k)%AY !
+
         ion_to_add(s)%part(k)%tag = bufer(k)%tag
      END DO
      IF (ALLOCATED(bufer)) DEALLOCATE(bufer, STAT=DEALLOC_ERR)
@@ -932,6 +1159,10 @@ SUBROUTINE ADD_ION_TO_ADD_LIST(s, x, y, vx, vy, vz, tag)
   ion_to_add(s)%part(N_ions_to_add(s))%VX  = vx
   ion_to_add(s)%part(N_ions_to_add(s))%VY  = vy
   ion_to_add(s)%part(N_ions_to_add(s))%VZ  = vz
+
+  ion_to_add(s)%part(N_ions_to_add(s))%AX  = ax !
+  ion_to_add(s)%part(N_ions_to_add(s))%AY  = ay !
+
   ion_to_add(s)%part(N_ions_to_add(s))%tag = tag
 
 !print '("Process ",i4," called ADD_ION_TO_ADD_LIST, T_cntr= ",i7)', Rank_of_process, T_cntr
@@ -969,6 +1200,10 @@ SUBROUTINE REMOVE_ION_FROM_ADD_LIST(s, k)
      ion_to_add(s)%part(k)%VX  = ion_to_add(s)%part(N_ions_to_add(s))%VX
      ion_to_add(s)%part(k)%VY  = ion_to_add(s)%part(N_ions_to_add(s))%VY
      ion_to_add(s)%part(k)%VZ  = ion_to_add(s)%part(N_ions_to_add(s))%VZ
+
+     ion_to_add(s)%part(k)%AX  = ion_to_add(s)%part(N_ions_to_add(s))%AX !
+     ion_to_add(s)%part(k)%AY  = ion_to_add(s)%part(N_ions_to_add(s))%AY !
+
      ion_to_add(s)%part(k)%tag = ion_to_add(s)%part(N_ions_to_add(s))%tag
 
   END IF
@@ -1003,6 +1238,8 @@ SUBROUTINE FIND_ALIENS_IN_ION_ADD_LIST
 
   INTEGER s, k, n 
 
+  REAL(8) ax, ay
+
   IF (N_of_inner_objects.EQ.0) RETURN
 
 ! cycle over ion species
@@ -1027,6 +1264,9 @@ SUBROUTINE FIND_ALIENS_IN_ION_ADD_LIST
            END IF
         END IF
 
+        ax = ion_to_add(s)%part(k)%AX
+        ay = ion_to_add(s)%part(k)%AY
+
 ! most probable situation when the particle is inside the area
         IF ( (ion_to_add(s)%part(k)%X.GE.c_X_area_min) .AND. &
            & (ion_to_add(s)%part(k)%X.LE.c_X_area_max) .AND. &
@@ -1044,23 +1284,21 @@ SUBROUTINE FIND_ALIENS_IN_ION_ADD_LIST
               IF (ion_to_add(s)%part(k)%Y.LT.c_Y_area_min) THEN
 ! particle is below the bottom side of the area
                  IF (Rank_of_master_below.LT.0) THEN
-!                    CALL PROCESS_ION_COLL_WITH_BOUNDARY_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                     print '("error-1 in FIND_ALIENS_IN_ION_ADD_LIST")'
                     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
                  ELSE
-                    CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)                       
+                    CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)                       
                  END IF
                  CALL REMOVE_ION_FROM_ADD_LIST(s, k)  ! this subroutine does  N_ions(s) = N_ions(s) - 1 and k = k-1
               ELSE IF (ion_to_add(s)%part(k)%Y.GT.c_Y_area_max) THEN
 ! particle is somewhere near the top left cell of the area
                  IF (Rank_of_master_above.LT.0) THEN
-!                    CALL PROCESS_ION_COLL_WITH_BOUNDARY_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                     print '("error-2 in FIND_ALIENS_IN_ION_ADD_LIST")'
                     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
                  ELSE
-                    CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                  END IF
                  CALL REMOVE_ION_FROM_ADD_LIST(s, k)  ! this subroutine does  N_ions(s) = N_ions(s) - 1 and k = k-1
               END IF
@@ -1073,10 +1311,9 @@ SUBROUTINE FIND_ALIENS_IN_ION_ADD_LIST
 
               IF (Rank_of_master_left.GE.0) THEN
 ! left neighbor cluster exists
-                 CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                 CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
               ELSE
 ! left neighbor cluster does not exist
-!                 CALL PROCESS_ION_COLL_WITH_BOUNDARY_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX,  ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)   ! left
 ! error
                  print '("error-3 in FIND_ALIENS_IN_ION_ADD_LIST")'
                  CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
@@ -1088,39 +1325,33 @@ SUBROUTINE FIND_ALIENS_IN_ION_ADD_LIST
               SELECT CASE (c_left_bottom_corner_type)
                  CASE (HAS_TWO_NEIGHBORS)
                     IF ((c_X_area_min-ion_to_add(s)%part(k)%X).LT.(c_Y_area_min-ion_to_add(s)%part(k)%Y)) THEN
-                       CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                     ELSE
-                       CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                     END IF
 
                  CASE (FLAT_WALL_BELOW)
-                    CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
 
                  CASE (FLAT_WALL_LEFT)
                     IF (ion_to_add(s)%part(k)%Y.GE.c_Y_area_min) THEN                 
-!                       CALL PROCESS_ION_COLL_WITH_BOUNDARY_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                        print '("error-4 in FIND_ALIENS_IN_ION_ADD_LIST")'
                        CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
                     ELSE
-                       CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)                       
+                       CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)                       
                     END IF
 
                  CASE (SURROUNDED_BY_WALL)
-!                    IF ((c_X_area_min-ion_to_add(s)%part(k)%X).LT.(c_Y_area_min-ion_to_add(s)%part(k)%Y)) THEN
-!                       CALL PROCESS_ION_COLL_WITH_BOUNDARY_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
-!                    ELSE
-!                       CALL PROCESS_ION_COLL_WITH_BOUNDARY_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
-!                    END IF
 ! error
                     print '("error-5 in FIND_ALIENS_IN_ION_ADD_LIST")'
                     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
 
                  CASE (EMPTY_CORNER_WALL_LEFT)
-                    CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                
                  CASE (EMPTY_CORNER_WALL_BELOW)
-                    CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
 
               END SELECT
 
@@ -1130,39 +1361,33 @@ SUBROUTINE FIND_ALIENS_IN_ION_ADD_LIST
               SELECT CASE (c_left_top_corner_type)
                  CASE (HAS_TWO_NEIGHBORS)
                     IF ((c_X_area_min-ion_to_add(s)%part(k)%X).LT.(ion_to_add(s)%part(k)%Y-c_Y_area_max)) THEN
-                       CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                     ELSE
-                       CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                     END IF
 
                  CASE (FLAT_WALL_ABOVE)
-                    CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
 
                  CASE (FLAT_WALL_LEFT)
                     IF (ion_to_add(s)%part(k)%Y.LE.c_Y_area_max) THEN                 
-!                       CALL PROCESS_ION_COLL_WITH_BOUNDARY_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                        print '("error-6 in FIND_ALIENS_IN_ION_ADD_LIST")'
                        CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
                     ELSE
-                       CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                     END IF
 
                  CASE (SURROUNDED_BY_WALL)
-!                    IF ((c_X_area_min-ion_to_add(s)%part(k)%X).LT.(ion_to_add(s)%part(k)%Y-c_Y_area_max)) THEN
-!                       CALL PROCESS_ION_COLL_WITH_BOUNDARY_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
-!                    ELSE
-!                       CALL PROCESS_ION_COLL_WITH_BOUNDARY_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
-!                    END IF
 ! error
                     print '("error-7 in FIND_ALIENS_IN_ION_ADD_LIST")'
                     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
 
                  CASE (EMPTY_CORNER_WALL_LEFT)
-                    CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
 
                  CASE (EMPTY_CORNER_WALL_ABOVE)
-                    CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
 
               END SELECT
            END IF
@@ -1179,23 +1404,21 @@ SUBROUTINE FIND_ALIENS_IN_ION_ADD_LIST
               IF (ion_to_add(s)%part(k)%Y.LT.c_Y_area_min) THEN
 ! particle is somewhere near the left bottom cell of the area
                  IF (Rank_of_master_below.LT.0) THEN
-!                    CALL PROCESS_ION_COLL_WITH_BOUNDARY_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                     print '("error-8 in FIND_ALIENS_IN_ION_ADD_LIST")'
                     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
                  ELSE
-                    CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)                       
+                    CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)                       
                  END IF
                  CALL REMOVE_ION_FROM_ADD_LIST(s, k)  ! this subroutine does  N_ions(s) = N_ions(s) - 1 and k = k-1
               ELSE IF (ion_to_add(s)%part(k)%Y.GT.c_Y_area_max) THEN
 ! particle is somewhere near the top left cell of the area
                  IF (Rank_of_master_above.LT.0) THEN
-!                    CALL PROCESS_ION_COLL_WITH_BOUNDARY_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                     print '("error-9 in FIND_ALIENS_IN_ION_ADD_LIST")'
                     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
                  ELSE
-                    CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                  END IF
                  CALL REMOVE_ION_FROM_ADD_LIST(s, k)  ! this subroutine does  N_ions(s) = N_ions(s) - 1 and k = k-1
               END IF
@@ -1208,10 +1431,9 @@ SUBROUTINE FIND_ALIENS_IN_ION_ADD_LIST
 
               IF (Rank_of_master_right.GE.0) THEN
 ! right neighbor cluster exists
-                 CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                 CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
               ELSE
 ! right neighbor cluster does not exist
-!                 CALL PROCESS_ION_COLL_WITH_BOUNDARY_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                  print '("error-10 in FIND_ALIENS_IN_ION_ADD_LIST")'
                  CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
@@ -1223,40 +1445,34 @@ SUBROUTINE FIND_ALIENS_IN_ION_ADD_LIST
               SELECT CASE (c_right_bottom_corner_type)
                  CASE (HAS_TWO_NEIGHBORS)
                     IF ((ion_to_add(s)%part(k)%X-c_X_area_max).LT.(c_Y_area_min-ion_to_add(s)%part(k)%Y)) THEN
-                       CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                     ELSE
-                       CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                     END IF
 
                  CASE (FLAT_WALL_BELOW)
-                    CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                 
                  CASE (FLAT_WALL_RIGHT)
                     IF (ion_to_add(s)%part(k)%Y.GE.c_Y_area_min) THEN
-!                       CALL PROCESS_ION_COLL_WITH_BOUNDARY_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                        print '("error-11 in FIND_ALIENS_IN_ION_ADD_LIST")'
                        CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
 
                     ELSE
-                       CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)                       
+                       CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)                       
                     END IF
 
                  CASE (SURROUNDED_BY_WALL)
-!                    IF ((ion_to_add(s)%part(k)%X-c_X_area_max).LT.(c_Y_area_min-ion_to_add(s)%part(k)%Y)) THEN
-!                       CALL PROCESS_ION_COLL_WITH_BOUNDARY_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
-!                    ELSE
-!                       CALL PROCESS_ION_COLL_WITH_BOUNDARY_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
-!                    END IF
 ! error
                        print '("error-12 in FIND_ALIENS_IN_ION_ADD_LIST")'
                        CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
 
                  CASE (EMPTY_CORNER_WALL_RIGHT)
-                    CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
 
                  CASE (EMPTY_CORNER_WALL_BELOW)
-                    CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
 
               END SELECT
 
@@ -1266,39 +1482,33 @@ SUBROUTINE FIND_ALIENS_IN_ION_ADD_LIST
               SELECT CASE (c_right_top_corner_type)
                  CASE (HAS_TWO_NEIGHBORS)
                     IF ((ion_to_add(s)%part(k)%X-c_X_area_max).LT.(ion_to_add(s)%part(k)%Y-c_Y_area_max)) THEN
-                       CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                     ELSE
-                       CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                       CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                     END IF
 
                  CASE (FLAT_WALL_ABOVE)
-                    CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
 
                  CASE (FLAT_WALL_RIGHT)
                     IF (ion_to_add(s)%part(k)%Y.LE.c_Y_area_max) THEN
-!                       CALL PROCESS_ION_COLL_WITH_BOUNDARY_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                        print '("error-13 in FIND_ALIENS_IN_ION_ADD_LIST")'
                        CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
                     ELSE
-                       CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)                    
+                       CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)                    
                     END IF
 
                  CASE (SURROUNDED_BY_WALL)
-!                    IF ((ion_to_add(s)%part(k)%X-c_X_area_max).LT.(ion_to_add(s)%part(k)%Y-c_Y_area_max)) THEN
-!                       CALL PROCESS_ION_COLL_WITH_BOUNDARY_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
-!                    ELSE
-!                       CALL PROCESS_ION_COLL_WITH_BOUNDARY_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
-!                    END IF
 ! error
                        print '("error-14 in FIND_ALIENS_IN_ION_ADD_LIST")'
                        CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
 
                  CASE (EMPTY_CORNER_WALL_RIGHT)
-                    CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
 
                  CASE (EMPTY_CORNER_WALL_ABOVE)
-                    CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
 
               END SELECT
 
@@ -1314,9 +1524,8 @@ SUBROUTINE FIND_ALIENS_IN_ION_ADD_LIST
            IF (periodic_boundary_X_left.AND.periodic_boundary_X_right) THEN
               IF (Rank_of_master_above.GE.0) THEN
 ! neighbor cluster above exists
-                 CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                 CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
               ELSE
-!                 CALL PROCESS_ION_COLL_WITH_BOUNDARY_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                  print '("error-15 in FIND_ALIENS_IN_ION_ADD_LIST")'
                  CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
@@ -1327,21 +1536,19 @@ SUBROUTINE FIND_ALIENS_IN_ION_ADD_LIST
 
            IF (Rank_of_master_above.GE.0) THEN
 ! neighbor cluster above exists
-              CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+              CALL ADD_ION_TO_SEND_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
            ELSE
 ! neighbor cluster above does not exist
               IF ((ion_to_add(s)%part(k)%X.GE.(c_X_area_min+1.0_8)).AND.(ion_to_add(s)%part(k)%X.LE.(c_X_area_max-1.0_8))) THEN
 ! most probable situation when the particle stays at least one cell away from the X-boundaries of the area
-!                 CALL PROCESS_ION_COLL_WITH_BOUNDARY_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                  print '("error-16 in FIND_ALIENS_IN_ION_ADD_LIST")'
                  CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
               ELSE IF (ion_to_add(s)%part(k)%X.LT.(c_X_area_min+1.0_8)) THEN
 ! particle near the left top corner
                  IF (c_left_top_corner_type.EQ.EMPTY_CORNER_WALL_ABOVE) THEN
-                    CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                  ELSE
-!                    CALL PROCESS_ION_COLL_WITH_BOUNDARY_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                     print '("error-17 in FIND_ALIENS_IN_ION_ADD_LIST")'
                     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
@@ -1349,9 +1556,8 @@ SUBROUTINE FIND_ALIENS_IN_ION_ADD_LIST
               ELSE IF (ion_to_add(s)%part(k)%X.GT.(c_X_area_max-1.0_8)) THEN
 ! particle near the right top corner
                  IF (c_right_top_corner_type.EQ.EMPTY_CORNER_WALL_ABOVE) THEN
-                    CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX,  ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX,  ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                  ELSE
-!                    CALL PROCESS_ION_COLL_WITH_BOUNDARY_ABOVE(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                     print '("error-18 in FIND_ALIENS_IN_ION_ADD_LIST")'
                     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
@@ -1367,9 +1573,8 @@ SUBROUTINE FIND_ALIENS_IN_ION_ADD_LIST
            IF (periodic_boundary_X_left.AND.periodic_boundary_X_right) THEN
               IF (Rank_of_master_below.GE.0) THEN
 ! neighbor cluster above exists
-                 CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                 CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
               ELSE
-!                 CALL PROCESS_ION_COLL_WITH_BOUNDARY_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                  print '("error-19 in FIND_ALIENS_IN_ION_ADD_LIST")'
                  CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
@@ -1380,21 +1585,19 @@ SUBROUTINE FIND_ALIENS_IN_ION_ADD_LIST
 
            IF (Rank_of_master_below.GE.0) THEN
 ! neighbor cluster below exists, remove particle and prepare to send it to the neighbor below
-              CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+              CALL ADD_ION_TO_SEND_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
            ELSE
 ! neighbor cluster below does not exist
               IF ((ion_to_add(s)%part(k)%X.GE.(c_X_area_min+1.0_8)).AND.(ion_to_add(s)%part(k)%X.LE.(c_X_area_max-1.0_8))) THEN
 ! most probable situation when the particle stays at least one cell away from the X-boundaries of the area
-!                 CALL PROCESS_ION_COLL_WITH_BOUNDARY_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                  print '("error-20 in FIND_ALIENS_IN_ION_ADD_LIST")'
                  CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
               ELSE IF (ion_to_add(s)%part(k)%X.LT.(c_X_area_min+1.0_8)) THEN
 ! particle near the left bottom corner
                  IF (c_left_bottom_corner_type.EQ.EMPTY_CORNER_WALL_BELOW) THEN
-                    CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_LEFT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                  ELSE
-!                    CALL PROCESS_ION_COLL_WITH_BOUNDARY_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                     print '("error-21 in FIND_ALIENS_IN_ION_ADD_LIST")'
                     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
@@ -1402,9 +1605,8 @@ SUBROUTINE FIND_ALIENS_IN_ION_ADD_LIST
               ELSE IF (ion_to_add(s)%part(k)%X.GT.(c_X_area_max-1.0_8)) THEN
 ! particle near the right bottom corner
                  IF (c_right_bottom_corner_type.EQ.EMPTY_CORNER_WALL_BELOW) THEN
-                    CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
+                    CALL ADD_ION_TO_SEND_RIGHT(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ax, ay, ion_to_add(s)%part(k)%tag)
                  ELSE
-!                    CALL PROCESS_ION_COLL_WITH_BOUNDARY_BELOW(s, ion_to_add(s)%part(k)%X, ion_to_add(s)%part(k)%Y, ion_to_add(s)%part(k)%VX, ion_to_add(s)%part(k)%VY, ion_to_add(s)%part(k)%VZ, ion_to_add(s)%part(k)%tag)
 ! error
                     print '("error-22 in FIND_ALIENS_IN_ION_ADD_LIST")'
                     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
@@ -1431,6 +1633,7 @@ SUBROUTINE FIND_INNER_OBJECT_COLL_IN_ION_ADD_LIST
   IMPLICIT NONE
 
   INTEGER s, k, n 
+  REAL(8) X_move, Y_move
 
   IF (N_of_inner_objects.EQ.0) RETURN
 
@@ -1446,12 +1649,16 @@ SUBROUTINE FIND_INNER_OBJECT_COLL_IN_ION_ADD_LIST
            IF (ion_to_add(s)%part(k)%Y.LE.whole_object(n)%Ymin) CYCLE
            IF (ion_to_add(s)%part(k)%Y.GE.whole_object(n)%Ymax) CYCLE
 ! collision detected
+           X_move = delta_t_factor * ion_to_add(s)%part(k)%VX * N_subcycles
+           Y_move = delta_t_factor * ion_to_add(s)%part(k)%VY * N_subcycles
            CALL TRY_ION_COLL_WITH_INNER_OBJECT( s, &
                                               & ion_to_add(s)%part(k)%X, &
                                               & ion_to_add(s)%part(k)%Y, &
                                               & ion_to_add(s)%part(k)%VX, &
                                               & ion_to_add(s)%part(k)%VY, &
                                               & ion_to_add(s)%part(k)%VZ, &
+                                              & X_move,                   &
+                                              & Y_move,                   &
                                               & ion_to_add(s)%part(k)%tag )  !, &
 !                                                  & whole_object(n) )
            CALL REMOVE_ION_FROM_ADD_LIST(s, k)  ! this subroutine does  N_ions_to_add(s) = N_ions_to_add(s) - 1 and k = k-1
@@ -1474,16 +1681,18 @@ SUBROUTINE PROCESS_ADDED_IONS
 
   IMPLICIT NONE
 
-  TYPE particle
+  TYPE particle_8
      real(8) X
      real(8) Y
      real(8) VX
      real(8) VY
      real(8) VZ
+     real(8) AX !
+     real(8) AY !
      integer tag
-  END TYPE particle
+  END TYPE particle_8
 
-  TYPE(particle), ALLOCATABLE :: bufer(:)
+  TYPE(particle_8), ALLOCATABLE :: bufer(:)
 
   INTEGER ALLOC_ERR, DEALLOC_ERR
   INTEGER s, k, current_N
@@ -1500,6 +1709,10 @@ SUBROUTINE PROCESS_ADDED_IONS
            bufer(k)%VX  = ion(s)%part(k)%VX
            bufer(k)%VY  = ion(s)%part(k)%VY
            bufer(k)%VZ  = ion(s)%part(k)%VZ
+
+           bufer(k)%AX  = ion(s)%part(k)%AX !
+           bufer(k)%AY  = ion(s)%part(k)%AY !
+
            bufer(k)%tag = ion(s)%part(k)%tag
         END DO
         DEALLOCATE(ion(s)%part, STAT=DEALLOC_ERR)
@@ -1512,6 +1725,10 @@ SUBROUTINE PROCESS_ADDED_IONS
            ion(s)%part(k)%VX  = bufer(k)%VX
            ion(s)%part(k)%VY  = bufer(k)%VY
            ion(s)%part(k)%VZ  = bufer(k)%VZ
+
+           ion(s)%part(k)%AX  = bufer(k)%AX !
+           ion(s)%part(k)%AY  = bufer(k)%AY !
+
            ion(s)%part(k)%tag = bufer(k)%tag
         END DO
         DEALLOCATE(bufer, STAT=DEALLOC_ERR)
@@ -1523,6 +1740,10 @@ SUBROUTINE PROCESS_ADDED_IONS
         ion(s)%part(k+N_ions(s))%VX  = ion_to_add(s)%part(k)%VX
         ion(s)%part(k+N_ions(s))%VY  = ion_to_add(s)%part(k)%VY
         ion(s)%part(k+N_ions(s))%VZ  = ion_to_add(s)%part(k)%VZ
+
+        ion(s)%part(k+N_ions(s))%AX  = ion_to_add(s)%part(k)%AX !
+        ion(s)%part(k+N_ions(s))%AY  = ion_to_add(s)%part(k)%AY !
+
         ion(s)%part(k+N_ions(s))%tag = ion_to_add(s)%part(k)%tag
      END DO
 
@@ -1560,9 +1781,9 @@ SUBROUTINE GATHER_ION_CHARGE_DENSITY
   INTEGER n2  !
   INTEGER n3  ! number of nodes in the x-direction
 
-  REAL(8), ALLOCATABLE :: rbufer(:)
+  REAL(8), ALLOCATABLE :: rbufer(:), rbufer2(:,:)
   INTEGER ALLOC_ERR
-  INTEGER bufsize
+  INTEGER bufsize, shift
 
 !  INTEGER npc ! n-umber of p-robe in c-luster
 !  INTEGER npa ! n-umber of p-robe a-ll [in the global list of probes]
@@ -1571,6 +1792,7 @@ SUBROUTINE GATHER_ION_CHARGE_DENSITY
   INTEGER pos_i_j, pos_ip1_j, pos_i_jp1, pos_ip1_jp1
   REAL(8) ax_ip1, ax_i, ay_jp1, ay_j
   REAL(8) vij, vip1j, vijp1
+  REAL(8) Chi_factor_s
 
   INTEGER pos
 
@@ -1584,7 +1806,8 @@ SUBROUTINE GATHER_ION_CHARGE_DENSITY
      & .OR. &
      & (periodicity_flag.EQ.PERIODICITY_X_Y) ) &
      & THEN
-     ALLOCATE(c_rho_i(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+     ALLOCATE(c_rho_ext(0:N_spec, c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
+!     ALLOCATE(c_Chi_i(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR) !ion contribution to Chi in the equation for the field
   END IF
 
   n1 = c_indx_y_max - c_indx_y_min + 1
@@ -1593,28 +1816,32 @@ SUBROUTINE GATHER_ION_CHARGE_DENSITY
   n2 = -c_indx_x_min + 1 - c_indx_y_min * n3
 
   bufsize = n1 * n3
-  ALLOCATE(rbufer(1:bufsize), STAT=ALLOC_ERR)
-
-  rbufer = 0.0_8
+  ALLOCATE(rbufer2(0:N_spec, 1:bufsize), STAT=ALLOC_ERR)
+  rbufer2 = 0.0_8
 
 !!  IF (N_of_probes_cluster.GT.0) probe_Ni_cluster = 0.0_8
 
   DO s = 1, N_spec
+
+     Chi_factor_s = Chi_factor * ( Qs(s)**2 / Ms(s) ) * (dble(N_subcycles))**2
+
      DO k = 1, N_ions(s)
      
         i = INT(ion(s)%part(k)%X)
         j = INT(ion(s)%part(k)%Y)
+        ! check if the particle within the cluster to which the node belongs:
         IF (ion(s)%part(k)%X.EQ.c_X_area_max) i = c_indx_x_max-1
         IF (ion(s)%part(k)%Y.EQ.c_Y_area_max) j = c_indx_y_max-1
 
         if ((i.lt.c_indx_x_min).or.(i.gt.(c_indx_x_max-1)).or.(j.lt.c_indx_y_min).or.(j.gt.(c_indx_y_max-1))) then
-           print '("Process ",i4," : Error-1 in GATHER_ION_CHARGE_DENSITY : index out of bounds")', Rank_of_process
-           print '("Process ",i4," : k/s/N_ions(s) : ",i8,2x,i8)', Rank_of_process, k, s, N_ions(s)
-           print '("Process ",i4," : x/y/vx/vy/vz/tag : ",5(2x,e14.7),2x,i4)', Rank_of_process, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag
-           print '("Process ",i4," : minx/maxx/miny/maxy : ",4(2x,e14.7))', Rank_of_process, c_X_area_min, c_X_area_max, c_Y_area_min, c_Y_area_max
+           print '("Process ", i4, " : Error-1 in GATHER_ION_CHARGE_DENSITY : index out of bounds")', Rank_of_process
+           print '("Process ", i4, " : k/s/N_ions(s) : ",i8, 2x, i3, 2x,i8)', Rank_of_process, k, s, N_ions(s)
+           print '("Process ", i4, " : x/y/vx/vy/vz/tag : ",5(2x,e14.7),2x,i4)', Rank_of_process, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag
+           print '("Process ", i4, " : minx/maxx/miny/maxy : ", 4(2x,e14.7))', Rank_of_process, c_X_area_min, c_X_area_max, c_Y_area_min, c_Y_area_max
+!           CYCLE
            CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
         end if
-
+! position relative to the bottom left corner of the cluster
 !     pos = i - c_indx_x_min + 1 + (j - c_indx_y_min) * (c_indx_x_max - c_indx_x_min + 1)
 
         pos_i_j     = i + j * n3 + n2
@@ -1654,43 +1881,46 @@ SUBROUTINE GATHER_ION_CHARGE_DENSITY
 ! assume that there may be positive and negative ions with charges up to +/-3e
 ! thus we use addition instead of multiplication which is faster, right?
            CASE(1)
-              rbufer(pos_i_j)     = rbufer(pos_i_j)     + vij                           !ax_i   * ay_j
-              rbufer(pos_ip1_j)   = rbufer(pos_ip1_j)   + vip1j                         !ax_ip1 * ay_j
-              rbufer(pos_i_jp1)   = rbufer(pos_i_jp1)   + vijp1                         !ax_i   * ay_jp1
-              rbufer(pos_ip1_jp1) = rbufer(pos_ip1_jp1) + 1.0_8 - vij - vip1j - vijp1   !ax_ip1 * ay_jp1
+              rbufer2(0, pos_i_j)     = rbufer2(0, pos_i_j)     + vij                           !ax_i   * ay_j
+              rbufer2(0, pos_ip1_j)   = rbufer2(0, pos_ip1_j)   + vip1j                         !ax_ip1 * ay_j
+              rbufer2(0, pos_i_jp1)   = rbufer2(0, pos_i_jp1)   + vijp1                         !ax_i   * ay_jp1
+              rbufer2(0, pos_ip1_jp1) = rbufer2(0, pos_ip1_jp1) + 1.0_8 - vij - vip1j - vijp1   !ax_ip1 * ay_jp1
            CASE(2)
-              rbufer(pos_i_j)     = rbufer(pos_i_j)     + vij + vij                                           !ax_i   * ay_j
-              rbufer(pos_ip1_j)   = rbufer(pos_ip1_j)   + vip1j + vip1j                                       !ax_ip1 * ay_j
-              rbufer(pos_i_jp1)   = rbufer(pos_i_jp1)   + vijp1 + vijp1                                       !ax_i   * ay_jp1
-              rbufer(pos_ip1_jp1) = rbufer(pos_ip1_jp1) + 2.0_8 - vij - vip1j - vijp1 - vij - vip1j - vijp1   !ax_ip1 * ay_jp1
+              rbufer2(0, pos_i_j)     = rbufer2(0, pos_i_j)     + vij + vij                                           !ax_i   * ay_j
+              rbufer2(0, pos_ip1_j)   = rbufer2(0, pos_ip1_j)   + vip1j + vip1j                                       !ax_ip1 * ay_j
+              rbufer2(0, pos_i_jp1)   = rbufer2(0, pos_i_jp1)   + vijp1 + vijp1                                       !ax_i   * ay_jp1
+              rbufer2(0, pos_ip1_jp1) = rbufer2(0, pos_ip1_jp1) + 2.0_8 - vij - vip1j - vijp1 - vij - vip1j - vijp1   !ax_ip1 * ay_jp1
            CASE(3)
-              rbufer(pos_i_j)     = rbufer(pos_i_j)     + vij + vij + vij                                                           !ax_i   * ay_j
-              rbufer(pos_ip1_j)   = rbufer(pos_ip1_j)   + vip1j + vip1j + vip1j                                                     !ax_ip1 * ay_j
-              rbufer(pos_i_jp1)   = rbufer(pos_i_jp1)   + vijp1 + vijp1 + vijp1                                                     !ax_i   * ay_jp1
-              rbufer(pos_ip1_jp1) = rbufer(pos_ip1_jp1) + 3.0_8 - vij - vip1j - vijp1 - vij - vip1j - vijp1 - vij - vip1j - vijp1   !ax_ip1 * ay_jp1
+              rbufer2(0, pos_i_j)     = rbufer2(0, pos_i_j)     + vij + vij + vij                                                           !ax_i   * ay_j
+              rbufer2(0, pos_ip1_j)   = rbufer2(0, pos_ip1_j)   + vip1j + vip1j + vip1j                                                     !ax_ip1 * ay_j
+              rbufer2(0, pos_i_jp1)   = rbufer2(0, pos_i_jp1)   + vijp1 + vijp1 + vijp1                                                     !ax_i   * ay_jp1
+              rbufer2(0, pos_ip1_jp1) = rbufer2(0, pos_ip1_jp1) + 3.0_8 - vij - vip1j - vijp1 - vij - vip1j - vijp1 - vij - vip1j - vijp1   !ax_ip1 * ay_jp1
            CASE(-1)
-              rbufer(pos_i_j)     = rbufer(pos_i_j)     - vij                           !ax_i   * ay_j
-              rbufer(pos_ip1_j)   = rbufer(pos_ip1_j)   - vip1j                         !ax_ip1 * ay_j
-              rbufer(pos_i_jp1)   = rbufer(pos_i_jp1)   - vijp1                         !ax_i   * ay_jp1
-              rbufer(pos_ip1_jp1) = rbufer(pos_ip1_jp1) - 1.0_8 + vij + vip1j + vijp1   !ax_ip1 * ay_jp1
+              rbufer2(0, pos_i_j)     = rbufer2(0, pos_i_j)     - vij                           !ax_i   * ay_j
+              rbufer2(0, pos_ip1_j)   = rbufer2(0, pos_ip1_j)   - vip1j                         !ax_ip1 * ay_j
+              rbufer2(0, pos_i_jp1)   = rbufer2(0, pos_i_jp1)   - vijp1                         !ax_i   * ay_jp1
+              rbufer2(0, pos_ip1_jp1) = rbufer2(0, pos_ip1_jp1) - 1.0_8 + vij + vip1j + vijp1   !ax_ip1 * ay_jp1
            CASE(-2)
-              rbufer(pos_i_j)     = rbufer(pos_i_j)     - vij - vij                                           !ax_i   * ay_j
-              rbufer(pos_ip1_j)   = rbufer(pos_ip1_j)   - vip1j - vip1j                                       !ax_ip1 * ay_j
-              rbufer(pos_i_jp1)   = rbufer(pos_i_jp1)   - vijp1 - vijp1                                       !ax_i   * ay_jp1
-              rbufer(pos_ip1_jp1) = rbufer(pos_ip1_jp1) - 2.0_8 + vij + vip1j + vijp1 + vij + vip1j + vijp1   !ax_ip1 * ay_jp1
+              rbufer2(0, pos_i_j)     = rbufer2(0, pos_i_j)     - vij - vij                                           !ax_i   * ay_j
+              rbufer2(0, pos_ip1_j)   = rbufer2(0, pos_ip1_j)   - vip1j - vip1j                                       !ax_ip1 * ay_j
+              rbufer2(0, pos_i_jp1)   = rbufer2(0, pos_i_jp1)   - vijp1 - vijp1                                       !ax_i   * ay_jp1
+              rbufer2(0, pos_ip1_jp1) = rbufer2(0, pos_ip1_jp1) - 2.0_8 + vij + vip1j + vijp1 + vij + vip1j + vijp1   !ax_ip1 * ay_jp1
            CASE(-3)
-              rbufer(pos_i_j)     = rbufer(pos_i_j)     - vij - vij - vij                                                           !ax_i   * ay_j
-              rbufer(pos_ip1_j)   = rbufer(pos_ip1_j)   - vip1j - vip1j - vip1j                                                     !ax_ip1 * ay_j
-              rbufer(pos_i_jp1)   = rbufer(pos_i_jp1)   - vijp1 - vijp1 - vijp1                                                     !ax_i   * ay_jp1
-              rbufer(pos_ip1_jp1) = rbufer(pos_ip1_jp1) - 3.0_8 + vij + vip1j + vijp1 + vij + vip1j + vijp1 + vij + vip1j + vijp1   !ax_ip1 * ay_jp1
+              rbufer2(0, pos_i_j)     = rbufer2(0, pos_i_j)     - vij - vij - vij                                                           !ax_i   * ay_j
+              rbufer2(0, pos_ip1_j)   = rbufer2(0, pos_ip1_j)   - vip1j - vip1j - vip1j                                                     !ax_ip1 * ay_j
+              rbufer2(0, pos_i_jp1)   = rbufer2(0, pos_i_jp1)   - vijp1 - vijp1 - vijp1                                                     !ax_i   * ay_jp1
+              rbufer2(0, pos_ip1_jp1) = rbufer2(0, pos_ip1_jp1) - 3.0_8 + vij + vip1j + vijp1 + vij + vip1j + vijp1 + vij + vip1j + vijp1   !ax_ip1 * ay_jp1
         END SELECT
-
-     END DO
-  END DO
+              
+              rbufer2(s, pos_i_j)     = rbufer2(s, pos_i_j)     + vij * Chi_factor_s                 
+              rbufer2(s, pos_ip1_j)   = rbufer2(s, pos_ip1_j)   + vip1j * Chi_factor_s          
+              rbufer2(s, pos_i_jp1)   = rbufer2(s, pos_i_jp1)   + vijp1 * Chi_factor_s   
+              rbufer2(s, pos_ip1_jp1) = rbufer2(s, pos_ip1_jp1) + (1.0_8 - vij - vip1j - vijp1) * Chi_factor_s 
+     END DO !cycle over ion particles of given species
+  END DO !cycle over species
 
 ! collect densities from all processes in a cluster
-  CALL MPI_REDUCE(rbufer, c_rho_i, bufsize, MPI_DOUBLE_PRECISION, MPI_SUM, 0, COMM_CLUSTER, ierr)
-  
+  CALL MPI_REDUCE(rbufer2, c_rho_ext, (1 + N_spec) * bufsize, MPI_DOUBLE_PRECISION, MPI_SUM, 0, COMM_CLUSTER, ierr)
   CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
 
 ! now cluster masters exchange information about densities in overlapping nodes
@@ -1698,159 +1928,303 @@ SUBROUTINE GATHER_ION_CHARGE_DENSITY
 
      IF (periodic_boundary_X_left.AND.periodic_boundary_X_right) THEN
 ! special case of self-connected X-periodic cluster
-        DO j = c_indx_y_min, c_indx_y_max
-           c_rho_i(c_indx_x_min+1, j) = c_rho_i(c_indx_x_min+1, j) + c_rho_i(c_indx_x_max, j) 
-           c_rho_i(c_indx_x_max-1, j) = c_rho_i(c_indx_x_max-1, j) + c_rho_i(c_indx_x_min, j)
-           c_rho_i(c_indx_x_min, j) = c_rho_i(c_indx_x_max-1, j)
-           c_rho_i(c_indx_x_max, j) = c_rho_i(c_indx_x_min+1, j)
-        END DO
+        DO s = 0, N_spec
+           DO j = c_indx_y_min, c_indx_y_max
+              c_rho_ext(s, c_indx_x_min+1, j) = c_rho_ext(s, c_indx_x_min+1, j) + c_rho_ext(s, c_indx_x_max, j) 
+              c_rho_ext(s, c_indx_x_max-1, j) = c_rho_ext(s, c_indx_x_max-1, j) + c_rho_ext(s, c_indx_x_min, j)
+              c_rho_ext(s, c_indx_x_min, j)   = c_rho_ext(s, c_indx_x_max-1, j)
+              c_rho_ext(s, c_indx_x_max, j)   = c_rho_ext(s, c_indx_x_min+1, j)
+           END DO
+        END DO   
      END IF
 
-     IF (WHITE_CLUSTER) THEN  
-! "white processes"
+     DO s = 0, N_spec
+        IF (WHITE_CLUSTER) THEN  
+!    "white processes"
 
-        IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
-        ALLOCATE(rbufer(1:n1), STAT=ALLOC_ERR)
+           IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1 : n1), STAT=ALLOC_ERR)
 
-        IF (Rank_horizontal_right.GE.0) THEN
-! ## 1 ## send right densities in the right edge
-           rbufer(1:n1) = c_rho_i(c_indx_x_max, c_indx_y_min:c_indx_y_max)
-           CALL MPI_SEND(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
-        END IF
+           IF (Rank_horizontal_right.GE.0) THEN
+!    ## 1 ## send right densities in the right edge
+              rbufer(1 : n1)      = c_rho_ext(s, c_indx_x_max, c_indx_y_min:c_indx_y_max)
+              CALL MPI_SEND(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+           END IF
 
-        IF (Rank_horizontal_left.GE.0) THEN
-! ## 2 ## send left densities in the left edge
-           rbufer(1:n1) = c_rho_i(c_indx_x_min, c_indx_y_min:c_indx_y_max)
-           CALL MPI_SEND(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
-        END IF
+           IF (Rank_horizontal_left.GE.0) THEN
+!    ## 2 ## send left densities in the left edge
+              rbufer(1 : n1)      = c_rho_ext(s, c_indx_x_min, c_indx_y_min:c_indx_y_max)
+              CALL MPI_SEND(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+           END IF
 
-        IF (Rank_horizontal_left.GE.0) THEN
-! ## 3 ## receive from left densities in the vertical line next to the left edge
-           CALL MPI_RECV(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal_left, COMM_HORIZONTAL, stattus, ierr)
-           DO j = c_indx_y_min, c_indx_y_max
-              c_rho_i(c_indx_x_min+1, j) = c_rho_i(c_indx_x_min+1, j) + rbufer(j-c_indx_y_min+1)
-           END DO
-        END IF
+           IF (Rank_horizontal_left.GE.0) THEN
+!    ## 3 ## receive from left densities in the vertical line next to the left edge
+              CALL MPI_RECV(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal_left, COMM_HORIZONTAL, stattus, ierr)
+              DO j = c_indx_y_min, c_indx_y_max
+                 c_rho_ext(s, c_indx_x_min+1, j) = c_rho_ext(s, c_indx_x_min+1, j) + rbufer(j-c_indx_y_min+1)
+              END DO
+           END IF
 
-        IF (Rank_horizontal_right.GE.0) THEN
-! ## 4 ## receive from right densities in the vertical line next to the right edge
-           CALL MPI_RECV(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal_right, COMM_HORIZONTAL, stattus, ierr)
-           DO j = c_indx_y_min, c_indx_y_max
-              c_rho_i(c_indx_x_max-1, j) = c_rho_i(c_indx_x_max-1, j) + rbufer(j-c_indx_y_min+1)
-           END DO           
-        END IF
+           IF (Rank_horizontal_right.GE.0) THEN
+!    ## 4 ## receive from right densities in the vertical line next to the right edge
+              CALL MPI_RECV(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal_right, COMM_HORIZONTAL, stattus, ierr)
+              DO j = c_indx_y_min, c_indx_y_max
+                 c_rho_ext(s, c_indx_x_max-1, j) = c_rho_ext(s, c_indx_x_max-1, j) + rbufer(j-c_indx_y_min+1)
+              END DO           
+           END IF
 
-        IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
-        ALLOCATE(rbufer(1:n3), STAT=ALLOC_ERR)
+           IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1 : n3), STAT=ALLOC_ERR)
 
-        IF (Rank_horizontal_above.GE.0) THEN
-! ## 5 ## send up densities in the top edge
-           rbufer(1:n3) = c_rho_i(c_indx_x_min:c_indx_x_max, c_indx_y_max)
-           CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
-        END IF
+           IF (Rank_horizontal_above.GE.0) THEN
+!    ## 5 ## send up densities in the top edge
+              rbufer(1 : n3)      = c_rho_ext(s, c_indx_x_min:c_indx_x_max, c_indx_y_max)
+              CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+           END IF
 
-        IF (Rank_horizontal_below.GE.0) THEN
-! ## 6 ## send down densities in the bottom edge
-           rbufer(1:n3) = c_rho_i(c_indx_x_min:c_indx_x_max, c_indx_y_min)
-           CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
-        END IF
+           IF (Rank_horizontal_below.GE.0) THEN
+!    ## 6 ## send down densities in the bottom edge
+              rbufer(1 : n3)      = c_rho_ext(s, c_indx_x_min:c_indx_x_max, c_indx_y_min)
+              CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+           END IF
 
-        IF (Rank_horizontal_below.GE.0) THEN
-! ## 7 ## receive from below densities in the vertical line above the bottom line
-           CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal_below, COMM_HORIZONTAL, stattus, ierr)
-           DO i = c_indx_x_min, c_indx_x_max
-              c_rho_i(i, c_indx_y_min+1) = c_rho_i(i, c_indx_y_min+1) + rbufer(i-c_indx_x_min+1)
-           END DO
-        END IF
+           IF (Rank_horizontal_below.GE.0) THEN
+!    ## 7 ## receive from below densities in the vertical line above the bottom line
+              CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal_below, COMM_HORIZONTAL, stattus, ierr)
+              DO i = c_indx_x_min, c_indx_x_max
+                 c_rho_ext(s, i, c_indx_y_min+1) = c_rho_ext(s, i, c_indx_y_min+1) + rbufer(i-c_indx_x_min+1)
+              END DO
+           END IF
 
-        IF (Rank_horizontal_above.GE.0) THEN
-! ## 8 ## receive from above densities in the vertical line under the top line
-           CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal_above, COMM_HORIZONTAL, stattus, ierr)
-           DO i = c_indx_x_min, c_indx_x_max
-              c_rho_i(i, c_indx_y_max-1) = c_rho_i(i, c_indx_y_max-1) + rbufer(i-c_indx_x_min+1)
-           END DO
-        END IF
+           IF (Rank_horizontal_above.GE.0) THEN
+!    ## 8 ## receive from above densities in the vertical line under the top line
+              CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal_above, COMM_HORIZONTAL, stattus, ierr)
+              DO i = c_indx_x_min, c_indx_x_max
+                 c_rho_ext(s, i, c_indx_y_max-1) = c_rho_ext(s, i, c_indx_y_max-1) + rbufer(i-c_indx_x_min+1)
+              END DO
+           END IF
 
-     ELSE
-! "black" processes
+        ELSE
+!    "black" processes
 
-        IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
-        ALLOCATE(rbufer(1:n1), STAT=ALLOC_ERR)
+           IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1 : n1), STAT=ALLOC_ERR)
 
-        IF (Rank_horizontal_left.GE.0) THEN
-! ## 1 ## receive from left densities in the vertical line next to the left edge
-           CALL MPI_RECV(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal_left, COMM_HORIZONTAL, stattus, ierr)
-           DO j = c_indx_y_min, c_indx_y_max
-              c_rho_i(c_indx_x_min+1, j) = c_rho_i(c_indx_x_min+1, j) + rbufer(j-c_indx_y_min+1)
-           END DO
-        END IF
+           IF (Rank_horizontal_left.GE.0) THEN
+!    ## 1 ## receive from left densities in the vertical line next to the left edge
+              CALL MPI_RECV(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal_left, COMM_HORIZONTAL, stattus, ierr)
+              DO j = c_indx_y_min, c_indx_y_max
+                 c_rho_ext(s, c_indx_x_min+1, j) = c_rho_ext(s, c_indx_x_min+1, j) + rbufer(j-c_indx_y_min+1)
+              END DO
+           END IF
 
-        IF (Rank_horizontal_right.GE.0) THEN
-! ## 2 ## receive from right densities in the vertical line next to the right edge
-           CALL MPI_RECV(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal_right, COMM_HORIZONTAL, stattus, ierr)
-           DO j = c_indx_y_min, c_indx_y_max
-              c_rho_i(c_indx_x_max-1, j) = c_rho_i(c_indx_x_max-1, j) + rbufer(j-c_indx_y_min+1)
-           END DO           
-        END IF
+           IF (Rank_horizontal_right.GE.0) THEN
+!    ## 2 ## receive from right densities in the vertical line next to the right edge
+              CALL MPI_RECV(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal_right, COMM_HORIZONTAL, stattus, ierr)
+              DO j = c_indx_y_min, c_indx_y_max
+                 c_rho_ext(s, c_indx_x_max-1, j) = c_rho_ext(s, c_indx_x_max-1, j) + rbufer(j-c_indx_y_min+1)
+              END DO           
+           END IF
 
-        IF (Rank_horizontal_right.GE.0) THEN
-! ## 3 ## send right densities in the right edge
-           rbufer(1:n1) = c_rho_i(c_indx_x_max, c_indx_y_min:c_indx_y_max)
-           CALL MPI_SEND(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
-        END IF
+           IF (Rank_horizontal_right.GE.0) THEN
+!    ## 3 ## send right densities in the right edge
+              rbufer(1 : n1)      = c_rho_ext(s, c_indx_x_max, c_indx_y_min:c_indx_y_max)
+              CALL MPI_SEND(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+           END IF
 
-        IF (Rank_horizontal_left.GE.0) THEN
-! ## 4 ## send left densities in the left edge
-           rbufer(1:n1) = c_rho_i(c_indx_x_min, c_indx_y_min:c_indx_y_max)
-           CALL MPI_SEND(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
-        END IF
+           IF (Rank_horizontal_left.GE.0) THEN
+!    ## 4 ## send left densities in the left edge
+              rbufer(1 : n1)      = c_rho_ext(s, c_indx_x_min, c_indx_y_min:c_indx_y_max)
+              CALL MPI_SEND(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+           END IF
 
-        IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
-        ALLOCATE(rbufer(1:n3), STAT=ALLOC_ERR)
+           IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1 : n3), STAT=ALLOC_ERR)
 
-        IF (Rank_horizontal_below.GE.0) THEN
-! ## 5 ## receive from below densities in the vertical line above the bottom line
-           CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal_below, COMM_HORIZONTAL, stattus, ierr)
-           DO i = c_indx_x_min, c_indx_x_max
-              c_rho_i(i, c_indx_y_min+1) = c_rho_i(i, c_indx_y_min+1) + rbufer(i-c_indx_x_min+1)
-           END DO
-        END IF
+           IF (Rank_horizontal_below.GE.0) THEN
+!    ## 5 ## receive from below densities in the vertical line above the bottom line
+              CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal_below, COMM_HORIZONTAL, stattus, ierr)
+              DO i = c_indx_x_min, c_indx_x_max
+                 c_rho_ext(s, i, c_indx_y_min+1) = c_rho_ext(s, i, c_indx_y_min+1) + rbufer(i-c_indx_x_min+1)
+              END DO
+           END IF
 
-        IF (Rank_horizontal_above.GE.0) THEN
-! ## 6 ## receive from above densities in the vertical line under the top line
-           CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal_above, COMM_HORIZONTAL, stattus, ierr)
-           DO i = c_indx_x_min, c_indx_x_max
-              c_rho_i(i, c_indx_y_max-1) = c_rho_i(i, c_indx_y_max-1) + rbufer(i-c_indx_x_min+1)
-           END DO
-        END IF
+           IF (Rank_horizontal_above.GE.0) THEN
+!    ## 6 ## receive from above densities in the vertical line under the top line
+              CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal_above, COMM_HORIZONTAL, stattus, ierr)
+              DO i = c_indx_x_min, c_indx_x_max
+                 c_rho_ext(s, i, c_indx_y_max-1) = c_rho_ext(s, i, c_indx_y_max-1) + rbufer(i-c_indx_x_min+1)
+              END DO
+           END IF
 
-        IF (Rank_horizontal_above.GE.0) THEN
-! ## 7 ## send up densities in the top edge
-           rbufer(1:n3) = c_rho_i(c_indx_x_min:c_indx_x_max, c_indx_y_max)
-           CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
-        END IF
+           IF (Rank_horizontal_above.GE.0) THEN
+!    ## 7 ## send up densities in the top edge
+              rbufer(1 : n3)      = c_rho_ext(s, c_indx_x_min:c_indx_x_max, c_indx_y_max)
+              CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+           END IF
 
-        IF (Rank_horizontal_below.GE.0) THEN
-! ## 8 ## send down densities in the bottom edge
-           rbufer(1:n3) = c_rho_i(c_indx_x_min:c_indx_x_max, c_indx_y_min)
-           CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
-        END IF
+           IF (Rank_horizontal_below.GE.0) THEN
+!    ## 8 ## send down densities in the bottom edge
+              rbufer(1 : n3)      = c_rho_ext(s, c_indx_x_min:c_indx_x_max, c_indx_y_min)
+              CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+           END IF
 
-     END IF
+        END IF !black/white selection
 
+!    exchange number 2, set values on edges:    
+        CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
+
+        IF (WHITE_CLUSTER) THEN
+!    "white processes"
+
+           IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1 : n1), STAT=ALLOC_ERR)
+
+           IF (Rank_horizontal_right.GE.0) THEN
+!    ## 1 ## send right densities next to the right edge
+              rbufer(1 : n1)      = c_rho_ext(s, c_indx_x_max - 1, c_indx_y_min:c_indx_y_max)
+              CALL MPI_SEND(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, request, ierr)
+           END IF
+
+           IF (Rank_horizontal_left.GE.0) THEN
+!    ## 2 ## send left densities next to the left edge
+              rbufer(1 : n1)      = c_rho_ext(s, c_indx_x_min + 1, c_indx_y_min:c_indx_y_max)
+              CALL MPI_SEND(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, request, ierr)
+           END IF
+
+           IF (Rank_horizontal_left.GE.0) THEN
+!    ## 3 ## receive from left densities in the left edge
+              CALL MPI_RECV(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal_left, COMM_HORIZONTAL, stattus, ierr)
+              DO j = c_indx_y_min, c_indx_y_max
+                 c_rho_ext(s, c_indx_x_min, j) = rbufer(j-c_indx_y_min+1)
+              END DO
+           END IF
+
+           IF (Rank_horizontal_right.GE.0) THEN
+!    ## 4 ## receive from right densities in the right edge
+              CALL MPI_RECV(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal_right, COMM_HORIZONTAL, stattus, ierr)
+              DO j = c_indx_y_min, c_indx_y_max
+                 c_rho_ext(s, c_indx_x_max, j) = rbufer(j-c_indx_y_min+1)
+              END DO
+           END IF
+
+           IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1 : n3), STAT=ALLOC_ERR)
+
+           IF (Rank_horizontal_above.GE.0) THEN
+!    ## 5 ## send up densities below the top edge
+              rbufer(1 : n3)      = c_rho_ext(s, c_indx_x_min:c_indx_x_max, c_indx_y_max - 1)
+              CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, request, ierr)
+           END IF
+
+           IF (Rank_horizontal_below.GE.0) THEN
+!    ## 6 ## send down densities above the bottom edge
+              rbufer(1 : n3)      = c_rho_ext(s, c_indx_x_min:c_indx_x_max, c_indx_y_min + 1)
+              CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr)
+           END IF
+
+           IF (Rank_horizontal_below.GE.0) THEN
+!    ## 7 ## receive from below densities in the bottom line
+              CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal_below, COMM_HORIZONTAL, stattus, ierr)
+              DO i = c_indx_x_min, c_indx_x_max
+                 c_rho_ext(s, i, c_indx_y_min) = rbufer(i-c_indx_x_min+1)
+              END DO
+           END IF
+
+           IF (Rank_horizontal_above.GE.0) THEN
+!    ## 8 ## receive from above densities in the top line
+              CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal_above, COMM_HORIZONTAL, stattus, ierr)
+              DO i = c_indx_x_min, c_indx_x_max
+                 c_rho_ext(s, i, c_indx_y_max) = rbufer(i-c_indx_x_min+1)
+              END DO
+           END IF     
+
+        ELSE
+!    "black" processes
+
+           IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1 : n1), STAT=ALLOC_ERR)
+
+           IF (Rank_horizontal_left.GE.0) THEN
+!    ## 1 ## receive from left densities in the left edge
+              CALL MPI_RECV(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal_left, COMM_HORIZONTAL, stattus, ierr)
+              DO j = c_indx_y_min, c_indx_y_max
+                 c_rho_ext(s, c_indx_x_min, j) = rbufer(j-c_indx_y_min+1)
+              END DO
+           END IF
+
+           IF (Rank_horizontal_right.GE.0) THEN
+!    ## 2 ## receive from right densities in the right edge
+              CALL MPI_RECV(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal_right, COMM_HORIZONTAL, stattus, ierr)
+              DO j = c_indx_y_min, c_indx_y_max
+                 c_rho_ext(s, c_indx_x_max, j) = rbufer(j-c_indx_y_min+1)
+              END DO
+           END IF
+
+           IF (Rank_horizontal_right.GE.0) THEN
+!    ## 3 ## send right densities left of the right edge
+              rbufer(1 : n1)      = c_rho_ext(s, c_indx_x_max - 1, c_indx_y_min:c_indx_y_max)
+              CALL MPI_SEND(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, request, ierr)
+           END IF
+
+           IF (Rank_horizontal_left.GE.0) THEN
+!    ## 4 ## send left densities right of the left edge
+              rbufer(1 : n1)      = c_rho_ext(s, c_indx_x_min + 1, c_indx_y_min:c_indx_y_max)
+              CALL MPI_SEND(rbufer, n1, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, request, ierr)
+           END IF
+
+           IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1 : n3), STAT=ALLOC_ERR)
+
+           IF (Rank_horizontal_below.GE.0) THEN
+!    ## 5 ## receive from below densities in the bottom line
+              CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal_below, COMM_HORIZONTAL, stattus, ierr)
+              DO i = c_indx_x_min, c_indx_x_max
+                 c_rho_ext(s, i, c_indx_y_min) = rbufer(i-c_indx_x_min+1)
+              END DO
+           END IF
+
+           IF (Rank_horizontal_above.GE.0) THEN
+!    ## 6 ## receive from above densities in the the top line
+              CALL MPI_RECV(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal_above, COMM_HORIZONTAL, stattus, ierr)
+              DO i = c_indx_x_min, c_indx_x_max
+                 c_rho_ext(s, i, c_indx_y_max) = rbufer(i-c_indx_x_min+1)
+              END DO
+           END IF
+
+           IF (Rank_horizontal_above.GE.0) THEN
+!    ## 7 ## send up densities below the top edge
+              rbufer(1 : n3)      = c_rho_ext(s, c_indx_x_min:c_indx_x_max, c_indx_y_max - 1)
+              CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, request, ierr)
+           END IF
+
+           IF (Rank_horizontal_below.GE.0) THEN
+!    ## 8 ## send down densities above the bottom edge
+              rbufer(1 : n3)      = c_rho_ext(s, c_indx_x_min:c_indx_x_max, c_indx_y_min + 1)
+              CALL MPI_SEND(rbufer, n3, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr)
+           END IF
+      
+        END IF !black/white selection     
+     END DO ! s=0,N_spec cycle  
+     
+     IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
 ! adjust densities at the boundaries with material walls
 
      IF (periodic_boundary_X_left.AND.periodic_boundary_X_right) THEN
 ! special case of self-connected X-periodic cluster
         IF (Rank_of_master_above.LT.0) THEN
            DO i = c_indx_x_min, c_indx_x_max
-              c_rho_i(i, c_indx_y_max) = 2.0_8 * c_rho_i(i, c_indx_y_max)
+              DO s = 0, N_spec
+                 c_rho_ext(s, i, c_indx_y_max) = 2.0_8 * c_rho_ext(s, i, c_indx_y_max)
+              END DO   
            END DO
         END IF
   
         IF (Rank_of_master_below.LT.0) THEN
            DO i = c_indx_x_min, c_indx_x_max
-              c_rho_i(i, c_indx_y_min) = 2.0_8 * c_rho_i(i, c_indx_y_min)
+              DO s = 0, N_spec
+                 c_rho_ext(s, i, c_indx_y_min) = 2.0_8 * c_rho_ext(s, i, c_indx_y_min)
+              END DO   
            END DO
         END IF
 
@@ -1858,62 +2232,94 @@ SUBROUTINE GATHER_ION_CHARGE_DENSITY
  
         IF (Rank_of_master_left.LT.0) THEN
            DO j = c_indx_y_min+1, c_indx_y_max-1
-              c_rho_i(c_indx_x_min, j) = 2.0_8 * c_rho_i(c_indx_x_min, j)
+              DO s = 0, N_spec
+                 c_rho_ext(s, c_indx_x_min, j) = 2.0_8 * c_rho_ext(s, c_indx_x_min, j)
+              END DO   
            END DO
         END IF
 
         IF (Rank_of_master_right.LT.0) THEN
            DO j = c_indx_y_min+1, c_indx_y_max-1
-              c_rho_i(c_indx_x_max, j) = 2.0_8 * c_rho_i(c_indx_x_max, j)
+              DO s = 0, N_spec
+                 c_rho_ext(s, c_indx_x_max, j) = 2.0_8 * c_rho_ext(s, c_indx_x_max, j)
+              END DO   
            END DO
         END IF
   
         IF (Rank_of_master_above.LT.0) THEN
            DO i = c_indx_x_min+1, c_indx_x_max-1
-              c_rho_i(i, c_indx_y_max) = 2.0_8 * c_rho_i(i, c_indx_y_max)
+              DO s = 0, N_spec
+                 c_rho_ext(s, i, c_indx_y_max) = 2.0_8 * c_rho_ext(s, i, c_indx_y_max)
+              END DO   
            END DO
         END IF
   
         IF (Rank_of_master_below.LT.0) THEN
            DO i = c_indx_x_min+1, c_indx_x_max-1
-              c_rho_i(i, c_indx_y_min) = 2.0_8 * c_rho_i(i, c_indx_y_min)
+              DO s = 0, N_spec
+                 c_rho_ext(s, i, c_indx_y_min) = 2.0_8 * c_rho_ext(s, i, c_indx_y_min)
+              END DO   
            END DO
         END IF
 
         SELECT CASE (c_left_bottom_corner_type)
            CASE (SURROUNDED_BY_WALL)
-              c_rho_i(c_indx_x_min, c_indx_y_min) = 4.0_8 * c_rho_i(c_indx_x_min, c_indx_y_min) 
+              DO s = 0, N_spec        
+                 c_rho_ext(s, c_indx_x_min, c_indx_y_min) = 4.0_8 * c_rho_ext(s, c_indx_x_min, c_indx_y_min) 
+              END DO   
            CASE (EMPTY_CORNER_WALL_LEFT)
-              c_rho_i(c_indx_x_min, c_indx_y_min+1) = 0.66666666666666_8 * c_rho_i(c_indx_x_min, c_indx_y_min+1)    ! 2*2/3=4/3=1/(3/4)
+              DO s = 0, N_spec     
+                 c_rho_ext(s, c_indx_x_min, c_indx_y_min+1) = 0.66666666666666_8 * c_rho_ext(s, c_indx_x_min, c_indx_y_min+1)    ! 2*2/3=4/3=1/(3/4)
+              END DO   
            CASE (EMPTY_CORNER_WALL_BELOW)
-              c_rho_i(c_indx_x_min+1, c_indx_y_min) = 0.66666666666666_8 * c_rho_i(c_indx_x_min+1, c_indx_y_min)    ! 2*2/3=4/3=1/(3/4)
+              DO s = 0, N_spec     
+                 c_rho_ext(s, c_indx_x_min+1, c_indx_y_min) = 0.66666666666666_8 * c_rho_ext(s, c_indx_x_min+1, c_indx_y_min)    ! 2*2/3=4/3=1/(3/4)
+              END DO   
         END SELECT
      
         SELECT CASE (c_left_top_corner_type)
            CASE (SURROUNDED_BY_WALL)
-              c_rho_i(c_indx_x_min, c_indx_y_max) = 4.0_8 * c_rho_i(c_indx_x_min, c_indx_y_max) 
+              DO s = 0, N_spec     
+                 c_rho_ext(s, c_indx_x_min, c_indx_y_max) = 4.0_8 * c_rho_ext(s, c_indx_x_min, c_indx_y_max) 
+              END DO   
            CASE (EMPTY_CORNER_WALL_LEFT)
-              c_rho_i(c_indx_x_min, c_indx_y_max-1) = 0.66666666666666_8 * c_rho_i(c_indx_x_min, c_indx_y_max-1)    ! 2*2/3=4/3=1/(3/4)
+              DO s = 0, N_spec     
+                 c_rho_ext(s, c_indx_x_min, c_indx_y_max-1) = 0.66666666666666_8 * c_rho_ext(s, c_indx_x_min, c_indx_y_max-1)    ! 2*2/3=4/3=1/(3/4)
+              END DO   
            CASE (EMPTY_CORNER_WALL_ABOVE)
-              c_rho_i(c_indx_x_min+1, c_indx_y_max) = 0.66666666666666_8 * c_rho_i(c_indx_x_min+1, c_indx_y_max)    ! 2*2/3=4/3=1/(3/4)
+              DO s = 0, N_spec     
+                 c_rho_ext(s, c_indx_x_min+1, c_indx_y_max) = 0.66666666666666_8 * c_rho_ext(s, c_indx_x_min+1, c_indx_y_max)    ! 2*2/3=4/3=1/(3/4)
+              END DO   
         END SELECT
 
         SELECT CASE (c_right_bottom_corner_type)
            CASE (SURROUNDED_BY_WALL)
-              c_rho_i(c_indx_x_max, c_indx_y_min) = 4.0_8 * c_rho_i(c_indx_x_max, c_indx_y_min) 
+              DO s = 0, N_spec     
+                 c_rho_ext(s, c_indx_x_max, c_indx_y_min) = 4.0_8 * c_rho_ext(s, c_indx_x_max, c_indx_y_min) 
+              END DO   
            CASE (EMPTY_CORNER_WALL_RIGHT)
-              c_rho_i(c_indx_x_max, c_indx_y_min+1) = 0.66666666666666_8 * c_rho_i(c_indx_x_max, c_indx_y_min+1)    ! 2*2/3=4/3=1/(3/4)
+              DO s = 0, N_spec     
+                 c_rho_ext(s, c_indx_x_max, c_indx_y_min+1) = 0.66666666666666_8 * c_rho_ext(s, c_indx_x_max, c_indx_y_min+1)        
+              END DO   
            CASE (EMPTY_CORNER_WALL_BELOW)
-              c_rho_i(c_indx_x_max-1, c_indx_y_min) = 0.66666666666666_8 * c_rho_i(c_indx_x_max-1, c_indx_y_min)    ! 2*2/3=4/3=1/(3/4)
+              DO s = 0, N_spec     
+                 c_rho_ext(s, c_indx_x_max-1, c_indx_y_min) = 0.66666666666666_8 * c_rho_ext(s, c_indx_x_max-1, c_indx_y_min)    ! 2*2/3=4/3=1/(3/4)
+              END DO   
         END SELECT
      
         SELECT CASE (c_right_top_corner_type)
            CASE (SURROUNDED_BY_WALL)
-              c_rho_i(c_indx_x_max, c_indx_y_max) = 4.0_8 * c_rho_i(c_indx_x_max, c_indx_y_max) 
+              DO s = 0, N_spec     
+                 c_rho_ext(s, c_indx_x_max, c_indx_y_max) = 4.0_8 * c_rho_ext(s, c_indx_x_max, c_indx_y_max) 
+              END DO   
            CASE (EMPTY_CORNER_WALL_RIGHT)
-              c_rho_i(c_indx_x_max, c_indx_y_max-1) = 0.66666666666666_8 * c_rho_i(c_indx_x_max, c_indx_y_max-1)    ! 2*2/3=4/3=1/(3/4)
+              DO s = 0, N_spec     
+                 c_rho_ext(s, c_indx_x_max, c_indx_y_max-1) = 0.66666666666666_8 * c_rho_ext(s, c_indx_x_max, c_indx_y_max-1)    ! 2*2/3=4/3=1/(3/4)
+              END DO   
            CASE (EMPTY_CORNER_WALL_ABOVE)
-              c_rho_i(c_indx_x_max-1, c_indx_y_max) = 0.66666666666666_8 * c_rho_i(c_indx_x_max-1, c_indx_y_max)    ! 2*2/3=4/3=1/(3/4)
+              DO s = 0, N_spec     
+                 c_rho_ext(s, c_indx_x_max-1, c_indx_y_max) = 0.66666666666666_8 * c_rho_ext(s, c_indx_x_max-1, c_indx_y_max)    ! 2*2/3=4/3=1/(3/4)
+              END DO   
         END SELECT
 
      END IF
@@ -1926,57 +2332,35 @@ SUBROUTINE GATHER_ION_CHARGE_DENSITY
 
 ! prepare and send charge density to field calculators
         DO k = 2, cluster_N_blocks
-           bufsize = (field_calculator(k)%indx_x_max - field_calculator(k)%indx_x_min + 1) * &
-                   & (field_calculator(k)%indx_y_max - field_calculator(k)%indx_y_min + 1)
+           shift = (field_calculator(k)%indx_x_max - field_calculator(k)%indx_x_min + 1) * &
+                 & (field_calculator(k)%indx_y_max - field_calculator(k)%indx_y_min + 1)
+           bufsize = shift * (1 + N_spec)
            IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
            ALLOCATE(rbufer(1:bufsize), STAT=ALLOC_ERR)
-           pos=0
+           pos = 0
            DO j = field_calculator(k)%indx_y_min, field_calculator(k)%indx_y_max
               DO i = field_calculator(k)%indx_x_min, field_calculator(k)%indx_x_max
-                 pos = pos+1
-                 rbufer(pos) = c_rho_i(i,j)
-
-!                 CALL FIND_INNER_OBJECT_CONTAINING_POINT(i,j,nio,position_flag)
-!                 SELECT CASE (position_flag)
-!                    CASE (1,3,5,7)
-!! point at the corner of a dielectric object
-!                       rbufer(pos) = (1.0_8) * c_rho_i(i,j)
-!                    CASE (2,4,6,8)
-!! point on the surface of a dielectric object
-!! the factor used here allows to use common factor -1/4*N_of_particles_cell in SOLVE_POTENTIAL_WITH_PETSC
-!! it also allows to use uncorrected values of volume charge density in nodes on the flat material surface
-!                       rbufer(pos) = 2.0_8 * c_rho_i(i,j) / (1.0_8 + whole_object(nio)%eps_diel)
-!                 END SELECT
-
+                 pos = pos + 1
+                 DO s = 0, N_spec
+                    rbufer(pos + s * shift) = c_rho_ext(s, i, j)
+                 END DO
               END DO
            END DO
            CALL MPI_SEND(rbufer, bufsize, MPI_DOUBLE_PRECISION, field_calculator(k)%rank, Rank_of_process, MPI_COMM_WORLD, request, ierr) 
         END DO
 
-! cluster master is a field calaculator too, prepare its own charge density
+! cluster master is a field calculator too, prepare its own charge density
         DO j = indx_y_min, indx_y_max
-!           rho_i(indx_x_min:indx_x_max, j) = c_rho_i(indx_x_min:indx_x_max, j)
-           DO i = indx_x_min, indx_x_max
-              rho_i(i, j) = c_rho_i(i, j)
-
-!              CALL FIND_INNER_OBJECT_CONTAINING_POINT(i,j,nio,position_flag)
-!              SELECT CASE (position_flag)
-!                 CASE (1,3,5,7)
-!! point at the corner of a dielectric object
-!                    rho_i(i, j) = (1.0_8) * c_rho_i(i,j)
-!                 CASE (2,4,6,8)
-!! point on the surface of a dielectric object
-!! the factor used here allows to use common factor -1/4*N_of_particles_cell in SOLVE_POTENTIAL_WITH_PETSC
-!! it also allows to use uncorrected values of volume charge density in nodes on the flat material surface
-!                    rho_i(i, j) = 2.0_8 * c_rho_i(i,j) / (1.0_8 + whole_object(nio)%eps_diel)
-!              END SELECT
-
+           rho_i(indx_x_min:indx_x_max, j) = c_rho_ext(0, indx_x_min:indx_x_max, j)
+           DO s = 1, N_spec
+              Chi_i(s, indx_x_min:indx_x_max, j) = c_rho_ext(s, indx_x_min:indx_x_max, j)
            END DO
         END DO
 
      ELSE
 
-        bufsize = (indx_x_max - indx_x_min + 1) * (indx_y_max - indx_y_min + 1)
+        shift = (indx_x_max - indx_x_min + 1) * (indx_y_max - indx_y_min + 1)
+        bufsize = shift * (1 + N_spec)
         IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
         ALLOCATE(rbufer(1:bufsize), STAT=ALLOC_ERR)
         
@@ -1986,7 +2370,10 @@ SUBROUTINE GATHER_ION_CHARGE_DENSITY
         DO j = indx_y_min, indx_y_max
            DO i = indx_x_min, indx_x_max
               pos = pos+1
-              rho_i(i,j) = rbufer(pos)
+              rho_i(i, j) = rbufer(pos)
+              DO s = 1, N_spec
+                 Chi_i(s, i, j) = rbufer(pos + s * shift)
+              END DO
            END DO
         END DO
      
@@ -1994,10 +2381,11 @@ SUBROUTINE GATHER_ION_CHARGE_DENSITY
 
   END IF
   
-  IF (ALLOCATED(rbufer))  DEALLOCATE(rbufer,  STAT=ALLOC_ERR)
+  IF (ALLOCATED(rbufer))   DEALLOCATE(rbufer,  STAT=ALLOC_ERR)
+  IF (ALLOCATED(rbufer2))  DEALLOCATE(rbufer2,  STAT=ALLOC_ERR)
 
   IF ( (cluster_rank_key.NE.0).OR.(periodicity_flag.EQ.PERIODICITY_NONE).OR.(periodicity_flag.EQ.PERIODICITY_X_PETSC).OR.(periodicity_flag.EQ.PERIODICITY_X_Y)) THEN
-     IF (ALLOCATED(c_rho_i)) DEALLOCATE(c_rho_i, STAT=ALLOC_ERR)
+     IF (ALLOCATED(c_rho_ext)) DEALLOCATE(c_rho_ext, STAT=ALLOC_ERR)
   END IF
 
 END SUBROUTINE GATHER_ION_CHARGE_DENSITY

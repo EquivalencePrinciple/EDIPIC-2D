@@ -9,18 +9,18 @@ module PETSc_Solver
   use BlockAndItsBoundaries
   use petsc
   implicit none
-  private
+  private !declarations are private by default
 
 #include <petsc/finclude/petsc.h>
 
-  KSP ksp     ! solver object
-  PC  pc      ! pre-conditioner object
+  KSP :: ksp     ! solver object
+  PC ::  pc      ! pre-conditioner object
   
-  Mat Amat                ! Matrix type
-  Vec bvec                ! Right hand side
-  Vec xvec                ! Solution
-  PetscInt ntoteq         ! total number of equations
-  PetscInt nloceq         ! local number of equations
+  Mat :: Amat                ! Matrix type
+  Vec :: bvec                ! Right hand side
+  Vec :: xvec                ! Solution
+  PetscInt :: ntoteq         ! total number of equations
+  PetscInt :: nloceq         ! local number of equations
   
   integer :: parComm
   
@@ -29,37 +29,55 @@ module PETSc_Solver
 contains
   
   subroutine Solve
-    PetscErrorCode :: ierr
+  implicit none
+  PetscErrorCode :: ierr  
 
 ! sets KSP options from the options database
+    call KSPSetOperators(ksp, Amat, Amat, ierr)
     call KSPSetFromOptions(ksp,ierr)
 ! solves linear system
     call KSPSolve(ksp, bvec, xvec, ierr)
 
-    return
   end subroutine Solve
   
-  subroutine SolverInitialization(comm)
+  subroutine SolverInitialization(comm, MatVecsCreated)
 
     implicit none
+
+    INCLUDE 'mpif.h'
     
     integer, intent(IN) ::  comm  !??? not used anywhere???
+    logical, intent(IN) :: MatVecsCreated
 
-    PetscInt :: one, four, five
+    logical :: bottom = .false.
+    logical :: left =   .false.
+    logical :: right =  .false.
+    logical :: top =    .false. ! these designate whether the block is adjacent to respective boundaries 
 
-    character(20) :: petsc_config='petsc.rc'   ! PETSc database file
+    PetscInt :: one, four, five, six, nine
+
+!    character(20) :: petsc_config='petsc.rc'   ! PETSc database file
     PetscErrorCode :: ierr
 
-    integer jbegin, jend, ibegin, iend
+    integer jbegin, jend, ibegin, iend, solved_row
     PetscInt :: irow_global
-    PetscInt :: jcolumn_global(1:5)
-    PetscScalar :: value_at_jcol(1:5)
+    PetscInt ::   jcolumn_global(1:9)
+    PetscScalar :: value_at_jcol(1:9)
     integer i, j
 
     INTEGER nio, position_flag
 
-    REAL(8), ALLOCATABLE :: eps_ishifted_j(:,:)
-    REAL(8), ALLOCATABLE :: eps_i_jshifted(:,:)
+!    REAL(8), ALLOCATABLE :: eps_ishifted_j(:,:)
+!    REAL(8), ALLOCATABLE :: eps_i_jshifted(:,:)
+
+    REAL(8), ALLOCATABLE :: eps11_left(:,:), eps22_left(:,:), eps12_left(:,:), eps21_left(:,:)
+    REAl(8), ALLOCATABLE :: eps11_down(:,:), eps22_down(:,:), eps12_down(:,:), eps21_down(:,:)
+
+    REAL(8) eps_xx, eps_xy, eps_yx, eps_yy
+    REAL(8) e_Exy, e_Wxy, e_Nyx, e_Syx
+    REAL(8) e_Wxx, e_Exx, e_Nyy, e_Syy
+    REAL(8) c_NS, c_EW  
+
     INTEGER ALLOC_ERR
 
 !    integer            :: m, n, nx, ny, i, j, k, ix, jy
@@ -72,12 +90,14 @@ contains
 !    INTEGER local_x_max,local_x_min,local_y_min,local_y_max
 !    INTEGER i_local,j_local
 
-    one=1
-    four=4
-    five=5
+    one =  1
+    four = 4
+    five=  5
+    six =  6
+    nine = 9
     
 ! Initializes the petsc database and mpi
-    call PetscInitialize(petsc_config, ierr)
+!!    call PetscInitialize(petsc_config, ierr) moved to CurrentProblemValues
 
 ! Remember the communicator for future reference
     parComm=PETSC_COMM_WORLD
@@ -85,36 +105,39 @@ contains
 ! Creates a matrix where the type is determined from either a call to MatSetType() 
 ! or from the options database with a call to MatSetFromOptions()
 ! The default matrix type is AIJ
-    call MatCreate(parComm, Amat, ierr)
+    IF (.not.MatVecsCreated) THEN
+       call MatCreate(parComm, Amat, ierr)
 
-    ntoteq=N_to_solve_total
-    nloceq=block_N_of_nodes_to_solve   !######## ??????????????????????????? NEW ##########
+       ntoteq = N_to_solve_total
+       nloceq = block_N_of_nodes_to_solve   !######## ??????????????????????????? NEW ##########
 
 ! Set MPI distribution for A matrix [by S.J.]
 
 ! Sets the local and global sizes and checks to determine compatibility
 ! below we use PETSC_DECIDE instead of number of local rows/columns
 !####??????    call MatSetSizes(Amat, PETSC_DECIDE, PETSC_DECIDE, ntoteq, ntoteq, ierr)
-    call MatSetSizes(Amat, nloceq, nloceq, ntoteq, ntoteq, ierr)    !######## ??????????????????????????? NEW ##########
+       call MatSetSizes(Amat, nloceq, nloceq, ntoteq, ntoteq, ierr)    !######## ??????????????????????????? NEW ##########
 
 ! Builds matrix object for a particular matrix type
 ! MATAIJ = "aij" - a matrix type to be used for sparce matrices
-    call MatSetType(Amat, MATAIJ, ierr)
+       call MatSetType(Amat, MATAIJ, ierr)
 
 ! Creates a matrix where the type is determined from the options database
-    call MatSetFromOptions(Amat, ierr)
-    five=5    !?????  why???
+       call MatSetFromOptions(Amat, ierr)
+          five=5    !?????  why???
 
 ! For good matrix assembly performance the user should preallocate the matrix storage
 ! the second argument is the number of nonzeros per row (same for all rows)
-    call MatSeqAIJSetPreallocation(Amat, five, PETSC_NULL_INTEGER, ierr)
-    five=5    !????? why???
+       call MatSeqAIJSetPreallocation(Amat, nine, PETSC_NULL_INTEGER, ierr)
+       five=5    !????? why???
 
 ! Preallocates memory for a sparce parallel matrix in AIJ format (the default parallel petsc format)
 ! the second argument is the number of nonzeros per row in DIAGONAL portion of local submatrix
 ! the fourth argument is the number of nonzeros per row in the OFF-DIAGONAL portion of local submatrix
-    call MatMPIAIJSetPreallocation(Amat, five, PETSC_NULL_INTEGER, five, PETSC_NULL_INTEGER, ierr)
-    one=1    !????  why???
+       call MatMPIAIJSetPreallocation(Amat, nine, PETSC_NULL_INTEGER, nine, PETSC_NULL_INTEGER, ierr)
+       one=1    !????  why???
+    ELSE
+    END IF
 
 ! ny - the number of columns
 ! jcol - global indices of columns
@@ -122,56 +145,100 @@ contains
 
 !----------------------------------------
 ! Initialization of matrix coefficients written by DS
-!
+! globally indexed matrix elements are initialized in parallel
 
     jbegin = indx_y_min+1
     jend   = indx_y_max-1
     ibegin = indx_x_min+1
     iend   = indx_x_max-1
 
-    IF (Rank_of_process_left.LT.0)  ibegin = indx_x_min
-    IF (Rank_of_process_right.LT.0) iend   = indx_x_max
-    IF (Rank_of_process_below.LT.0) jbegin = indx_y_min
-    IF (Rank_of_process_above.LT.0) jend   = indx_y_max
+    IF (Rank_of_process_left.LT.0)  THEN 
+        ibegin = indx_x_min
+        left = .true.
+    END IF    
+    IF (Rank_of_process_right.LT.0) THEN
+        iend   = indx_x_max
+        right = .true.
+    END IF    
+    IF (Rank_of_process_below.LT.0) THEN
+       jbegin = indx_y_min
+       bottom = .true.
+    END IF 
+    IF (Rank_of_process_above.LT.0) THEN
+        jend   = indx_y_max
+        top = .true.
+    END IF   
 
-    ALLOCATE(eps_ishifted_j(ibegin:iend+1, jbegin:jend), STAT=ALLOC_ERR)   ! eps_ishifted_j(i,j) is between nodes {i-1,j} and {i,j}
-    ALLOCATE(eps_i_jshifted(ibegin:iend, jbegin:jend+1), STAT=ALLOC_ERR)   ! eps_i_jshifted(i,j) is between nodes {i,j-1} and {i,j}
+    solved_row = iend - ibegin + 1
 
-    eps_ishifted_j = 1.0_8
-    eps_i_jshifted = 1.0_8
+!    ALLOCATE(eps_ishifted_j(ibegin:iend+1, jbegin:jend), STAT=ALLOC_ERR)   ! eps_ishifted_j(i,j) is between nodes {i-1,j} and {i,j}
+!    ALLOCATE(eps_i_jshifted(ibegin:iend, jbegin:jend+1), STAT=ALLOC_ERR)   ! eps_i_jshifted(i,j) is between nodes {i,j-1} and {i,j}
 
+!    eps_ishifted_j = 1.0_8
+!    eps_i_jshifted = 1.0_8
+
+    ALLOCATE(eps11_left(ibegin : iend + 1, jbegin : jend), STAT=ALLOC_ERR)
+    ALLOCATE(eps12_left(ibegin : iend + 1, jbegin : jend), STAT=ALLOC_ERR)
+    ALLOCATE(eps21_left(ibegin : iend + 1, jbegin : jend), STAT=ALLOC_ERR)
+    ALLOCATE(eps22_left(ibegin : iend + 1, jbegin : jend), STAT=ALLOC_ERR)
+
+    ALLOCATE(eps11_down(ibegin : iend, jbegin : jend + 1), STAT=ALLOC_ERR)
+    ALLOCATE(eps12_down(ibegin : iend, jbegin : jend + 1), STAT=ALLOC_ERR)
+    ALLOCATE(eps21_down(ibegin : iend, jbegin : jend + 1), STAT=ALLOC_ERR)
+    ALLOCATE(eps22_down(ibegin : iend, jbegin : jend + 1), STAT=ALLOC_ERR)
+
+    eps11_left = 1.0_8
+    eps22_left = 1.0_8
+    eps12_left = 0.0_8
+    eps21_left = 0.0_8 
+    
+    eps11_down = 1.0_8
+    eps22_down = 1.0_8
+    eps12_down = 0.0_8
+    eps21_down = 0.0_8
+    
     DO j = jbegin, jend
-       DO i = ibegin, iend+1
-          CALL SET_EPS_ISHIFTED(i, j, eps_ishifted_j(i,j))
+       DO i = ibegin, iend + 1
+          CALL SET_EPS_ISHIFTED(i, j, eps_xx, eps_xy, eps_yx, eps_yy)
+          eps11_left(i,j) = eps_xx
+          eps12_left(i,j) = eps_xy
+          eps21_left(i,j) = eps_yx
+          eps22_left(i,j) = eps_yy
        END DO
     END DO
+!    write(*,*) Rank_of_process, "DONE left"
 
-    DO j = jbegin, jend+1
+    DO j = jbegin, jend + 1
        DO i = ibegin, iend
-          CALL SET_EPS_JSHIFTED(i, j, eps_i_jshifted(i,j))
+          CALL SET_EPS_JSHIFTED(i, j, eps_xx, eps_xy, eps_yx, eps_yy)
+          eps11_down(i,j) = eps_xx
+          eps12_down(i,j) = eps_xy
+          eps21_down(i,j) = eps_yx
+          eps22_down(i,j) = eps_yy
        END DO
     END DO
+!    write (*,*) Rank_of_process, "DONE down"
 
-    irow_global = global_offset
+    irow_global = global_offset ! first global node number in the block will be (global_offset + 1)
 
-!    j = indx_y_min !>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>.
-    IF (jbegin.EQ.indx_y_min) THEN
+!    j = indx_y_min !>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    IF (bottom) THEN
 ! boundary object along bottom border
-       DO i = ibegin, iend
+       DO i = ibegin, iend !nodes on the border y = 0
           irow_global = irow_global + 1
 !          number_of_columns = 1
           jcolumn_global(1) = irow_global
           value_at_jcol(1) = 1.0_8
           call MatSetValues(Amat, one, irow_global, one, jcolumn_global(1:1), value_at_jcol(1:1), INSERT_VALUES, ierr) 
        END DO
-    END IF
+    END IF ! otherwise do notning
 
 !    j = indx_y_min+1 !>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-    j = indx_y_min+1
+    j = indx_y_min + 1 !2d line of nodes for blocks on the bottom, first for others
 
     i = indx_x_min
 
-    IF (ibegin.EQ.indx_x_min) THEN
+    IF (left) THEN
 ! boundary object along left border
        irow_global = irow_global + 1
        IF (.NOT.block_has_symmetry_plane_X_left) THEN
@@ -183,14 +250,18 @@ contains
 ! the left border is a symmetry plane
           IF (jbegin.EQ.indx_y_min) THEN                       ! BELOW
 ! boundary object along the bottom border
-             jcolumn_global(1) = irow_global - (iend-ibegin+1)                          ! use the own node
+             jcolumn_global(1) = irow_global - solved_row ! BELOW, use own node
           ELSE
 ! use a node from neighbor below
-             jcolumn_global(1) = process_below_left_top_inner_node-1                    ! use a node from the neighbor below
+             jcolumn_global(1) = process_below_left_top_inner_node - 1 ! use a node from the neighbor BELOW
           END IF
-          jcolumn_global(2) = irow_global                      ! CENTER
-          jcolumn_global(3) = irow_global+1                    ! RIGHT
-          jcolumn_global(4) = irow_global + (iend-ibegin+1)    ! ABOVE
+          jcolumn_global(2) = irow_global                 ! CENTER
+          jcolumn_global(3) = irow_global + 1             ! RIGHT
+          jcolumn_global(4) = irow_global + solved_row    ! ABOVE
+          
+          jcolumn_global(5) = jcolumn_global(4) + 1 !NE, for center node on symmetry line
+          jcolumn_global(6) = jcolumn_global(1) + 1 !SE
+          
 
 ! check whether the point is inside or at the surface of any inner object
           CALL FIND_INNER_OBJECT_CONTAINING_POINT(indx_x_min, indx_y_min+1, nio, position_flag)
@@ -221,15 +292,24 @@ contains
 !                call MatSetValues(Amat, one, irow_global, four, jcolumn_global(1:4), value_at_jcol(1:4), INSERT_VALUES, ierr)              
              CASE DEFAULT 
 ! inside dielectric or plasma
-                value_at_jcol(1) =   eps_i_jshifted(i,j)
-                value_at_jcol(2) = -(eps_i_jshifted(i,j) + eps_i_jshifted(i,j+1) + eps_ishifted_j(i+1,j) + eps_ishifted_j(i+1,j))
-                value_at_jcol(3) =   eps_ishifted_j(i+1,j) + eps_ishifted_j(i+1,j)
-                value_at_jcol(4) =   eps_i_jshifted(i,j+1)
+                e_Exy = eps12_left(i + 1,j) !East
+                e_Syy = eps22_down(i,j)     !South
+                e_Nyy = eps22_down(i,j + 1) !North
+                e_Exx = eps11_left(i + 1,j) !East
+
+                value_at_jcol(1) = -( -e_Syy + 0.5_8 * e_Exy) !S
+                value_at_jcol(2) = -(  e_Syy + e_Nyy + 2.0_8 * e_Exx) !C
+                value_at_jcol(3) = -( -2.0_8 * e_Exx) !E
+                value_at_jcol(4) = -( -e_Nyy - 0.5_8 * e_Exy) !N
+
+                value_at_jcol(5) = -( -0.5_8 * e_Exy) !NE
+                value_at_jcol(6) = -(  0.5_8 * e_Exy) !SE
+
 !                value_at_jcol(1) = 0.25_8
 !                value_at_jcol(2) = -1.0_8
 !                value_at_jcol(3) = 0.5_8
 !                value_at_jcol(4) = 0.25_8
-                call MatSetValues(Amat, one, irow_global, four, jcolumn_global(1:4), value_at_jcol(1:4), INSERT_VALUES, ierr) 
+                call MatSetValues(Amat, one, irow_global, six, jcolumn_global(1:6), value_at_jcol(1:6), INSERT_VALUES, ierr) 
           END SELECT
 
        END IF   !### IF (.NOT.block_has_symmetry_plane_X_left) THEN
@@ -245,23 +325,31 @@ contains
        value_at_jcol(1) = 1.0_8
        call MatSetValues(Amat, one, irow_global, one, jcolumn_global(1:1), value_at_jcol(1:1), INSERT_VALUES, ierr)
     ELSE
-
-       IF (jbegin.EQ.indx_y_min) THEN                       ! BELOW
+! handling inner nodes at the corner
+       jcolumn_global(3) = irow_global                 ! CENTER
+       jcolumn_global(4) = irow_global + 1             ! RIGHT
+       jcolumn_global(5) = irow_global + solved_row    ! ABOVE
+       jcolumn_global(6) = jcolumn_global(5) + 1       ! NE
+       IF (bottom) THEN                       ! BELOW
 ! boundary object along the bottom border
-          jcolumn_global(1) = irow_global - (iend-ibegin+1)                          ! use the own node
+          jcolumn_global(1) = irow_global - solved_row                       ! BELOW, use own node
        ELSE
 ! use a node from neighbor below
-          jcolumn_global(1) = process_below_left_top_inner_node                      ! use a node from the neighbor below
+          jcolumn_global(1) = process_below_left_top_inner_node              ! use a node from the neighbor BELOW
        END IF
-       IF (ibegin.EQ.indx_x_min) THEN                       ! LEFT
+       jcolumn_global(7) = jcolumn_global(1) + 1       ! SE
+       IF (left) THEN                       ! LEFT border (not symmetry)
 ! boundary object along the left border
-          jcolumn_global(2) = irow_global-1                                          ! use the own node
+          jcolumn_global(2) = irow_global - 1  ! use own node
+          jcolumn_global(9) = irow_global + solved_row - 1  ! col(5) - 1
+          jcolumn_global(8) = jcolumn_global(1) - 1 ! SW corner, with own node or not
        ELSE
-          jcolumn_global(2) = process_left_bottom_right_inner_node                   ! use a node from the left neighbor
+          jcolumn_global(2) = process_left_bottom_right_inner_node ! use a node from the left neighbor
+          jcolumn_global(9) = jcolumn_global(2) + process_left_solved_nodes_row_length
        END IF
-       jcolumn_global(3) = irow_global                      ! CENTER
-       jcolumn_global(4) = irow_global+1                    ! RIGHT
-       jcolumn_global(5) = irow_global + (iend-ibegin+1)    ! ABOVE
+       if ((.not.left).and.bottom)        jcolumn_global(8) = jcolumn_global(2) - process_left_solved_nodes_row_length
+       if ((.not.left).and.(.not.bottom)) jcolumn_global(8) = offset_of_block(Rank_of_process_below) - 1
+       ! last node in the block to the SE
 
 ! check whether the point is inside or at the surface of any inner object
        CALL FIND_INNER_OBJECT_CONTAINING_POINT(indx_x_min+1, indx_y_min+1, nio, position_flag)
@@ -279,7 +367,7 @@ contains
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
 !             value_at_jcol(5) = 0.25_8
-!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !          CASE (4)
 !! dielectric surface on the left
 !             value_at_jcol(1) = 0.25_8
@@ -287,7 +375,7 @@ contains
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
 !             value_at_jcol(5) = 0.25_8
-!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !          CASE (2)
 !! dielectric surface above
 !             value_at_jcol(1) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
@@ -295,7 +383,7 @@ contains
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.25_8
 !             value_at_jcol(5) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
-!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !          CASE (6)
 !! dielectric surface below
 !             value_at_jcol(1) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
@@ -303,24 +391,41 @@ contains
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.25_8
 !             value_at_jcol(5) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
-!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
           CASE DEFAULT 
 ! inside dielectric, inside plasma, or in a corner of a dielectric object
-             value_at_jcol(1) =   eps_i_jshifted(i,j)
-             value_at_jcol(2) =   eps_ishifted_j(i,j)
-             value_at_jcol(3) = -(eps_i_jshifted(i,j) + eps_i_jshifted(i,j+1) + eps_ishifted_j(i,j) + eps_ishifted_j(i+1,j))
-             value_at_jcol(4) =   eps_ishifted_j(i+1,j)
-             value_at_jcol(5) =   eps_i_jshifted(i,j+1)
+             e_Exy = eps12_left(i+1,j)
+             e_Wxy = eps12_left(i,j)
+             e_Nyx = eps21_down(i,j+1)
+             e_Syx = eps21_down(i,j)
+             c_NS = 0.25_8 * (e_Wxy - e_Exy)
+             c_EW = 0.25_8 * (e_Nyx - e_Syx)
+
+             e_Nyy = eps22_down(i,j+1)
+             e_Syy = eps22_down(i,j)
+             e_Exx = eps11_left(i+1,j)
+             e_Wxx = eps11_left(i,j)
+
+             value_at_jcol(1) = -( -c_NS - e_Syy) !S
+             value_at_jcol(2) = -(  c_EW - e_Wxx) !W
+             value_at_jcol(3) = -(  e_Exx + e_Wxx + e_Nyy + e_Syy ) !C
+             value_at_jcol(4) = -( -c_EW - e_Exx) !E
+             value_at_jcol(5) = -(  c_NS - e_Nyy) !N
+
+             value_at_jcol(6) = -( -0.25_8 * (e_Exy + e_Nyx)) !NE
+             value_at_jcol(7) = -(  0.25_8 * (e_Exy + e_Syx)) !SE
+             value_at_jcol(8) = -( -0.25_8 * (e_Wxy + e_Syx)) !SW
+             value_at_jcol(9) = -(  0.25_8 * (e_Nyx + e_Wxy)) !NW
 !             value_at_jcol(1) = 0.25_8
 !             value_at_jcol(2) = 0.25_8
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.25_8
 !             value_at_jcol(5) = 0.25_8
-             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+             call MatSetValues(Amat, one, irow_global, nine, jcolumn_global(1:9), value_at_jcol(1:9), INSERT_VALUES, ierr) 
        END SELECT
     END IF   !### IF ((i.EQ.i_given_F_double_period_sys).AND.(j.EQ.j_given_F_double_period_sys)) THEN
 
-    IF (jbegin.EQ.indx_y_min) THEN
+    IF (bottom) THEN
 ! boundary object along the bottom border
        DO i = indx_x_min+2, indx_x_max-2
           irow_global = irow_global + 1
@@ -330,12 +435,17 @@ contains
              value_at_jcol(1) = 1.0_8
              call MatSetValues(Amat, one, irow_global, one, jcolumn_global(1:1), value_at_jcol(1:1), INSERT_VALUES, ierr)
           ELSE
-
-             jcolumn_global(1) = irow_global - (iend-ibegin+1)    ! BELOW
+             ! all nodes are within the block
+             jcolumn_global(1) = irow_global - solved_row         ! BELOW
              jcolumn_global(2) = irow_global-1                    ! LEFT
              jcolumn_global(3) = irow_global                      ! CENTER
              jcolumn_global(4) = irow_global+1                    ! RIGHT
-             jcolumn_global(5) = irow_global + (iend-ibegin+1)    ! ABOVE
+             jcolumn_global(5) = irow_global + solved_row         ! ABOVE
+
+             jcolumn_global(6) = jcolumn_global(5) + 1 !NE
+             jcolumn_global(7) = jcolumn_global(1) + 1 !SE
+             jcolumn_global(8) = jcolumn_global(1) - 1 !SW
+             jcolumn_global(9) = jcolumn_global(5) - 1 !NW
 
 ! check whether the point is inside or at the surface of any inner object
              CALL FIND_INNER_OBJECT_CONTAINING_POINT(i, indx_y_min+1, nio, position_flag)
@@ -353,7 +463,7 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
 !                   value_at_jcol(5) = 0.25_8
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !                CASE (4)
 !! dielectric surface on the left
 !                   value_at_jcol(1) = 0.25_8
@@ -361,7 +471,7 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
 !                   value_at_jcol(5) = 0.25_8
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !                CASE (2)
 !! dielectric surface above
 !                   value_at_jcol(1) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
@@ -369,7 +479,7 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.25_8
 !                   value_at_jcol(5) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !                CASE (6)
 !! dielectric surface below
 !                   value_at_jcol(1) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
@@ -377,20 +487,37 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.25_8
 !                   value_at_jcol(5) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
                 CASE DEFAULT 
 ! inside dielectric, inside plasma, or in a corner of a dielectric object
-                   value_at_jcol(1) =   eps_i_jshifted(i,j)
-                   value_at_jcol(2) =   eps_ishifted_j(i,j)
-                   value_at_jcol(3) = -(eps_i_jshifted(i,j) + eps_i_jshifted(i,j+1) + eps_ishifted_j(i,j) + eps_ishifted_j(i+1,j))
-                   value_at_jcol(4) =   eps_ishifted_j(i+1,j)
-                   value_at_jcol(5) =   eps_i_jshifted(i,j+1)
+                   e_Exy = eps12_left(i+1,j)
+                   e_Wxy = eps12_left(i,j)
+                   e_Nyx = eps21_down(i,j+1)
+                   e_Syx = eps21_down(i,j)
+                   c_NS = 0.25_8 * (e_Wxy - e_Exy)
+                   c_EW = 0.25_8 * (e_Nyx - e_Syx)
+
+                   e_Nyy = eps22_down(i,j+1)
+                   e_Syy = eps22_down(i,j)
+                   e_Exx = eps11_left(i+1,j)
+                   e_Wxx = eps11_left(i,j)
+
+                   value_at_jcol(1) = -( -c_NS - e_Syy) !S
+                   value_at_jcol(2) = -(  c_EW - e_Wxx) !W
+                   value_at_jcol(3) = -(  e_Exx + e_Wxx + e_Nyy + e_Syy ) !C
+                   value_at_jcol(4) = -( -c_EW - e_Exx) !E
+                   value_at_jcol(5) = -(  c_NS - e_Nyy) !N
+
+                   value_at_jcol(6) = -( -0.25_8 * (e_Exy + e_Nyx)) !NE
+                   value_at_jcol(7) = -(  0.25_8 * (e_Exy + e_Syx)) !SE
+                   value_at_jcol(8) = -( -0.25_8 * (e_Wxy + e_Syx)) !SW
+                   value_at_jcol(9) = -(  0.25_8 * (e_Nyx + e_Wxy)) !NW
 !                   value_at_jcol(1) = 0.25_8
 !                   value_at_jcol(2) = 0.25_8
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.25_8
 !                   value_at_jcol(5) = 0.25_8
-                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+                   call MatSetValues(Amat, one, irow_global, nine, jcolumn_global(1:9), value_at_jcol(1:9), INSERT_VALUES, ierr) 
              END SELECT
           END IF    !### IF ((i.EQ.i_given_F_double_period_sys).AND.(j.EQ.j_given_F_double_period_sys)) THEN
        END DO    !### DO i = indx_x_min+2, indx_x_max-2
@@ -406,12 +533,17 @@ contains
              value_at_jcol(1) = 1.0_8
              call MatSetValues(Amat, one, irow_global, one, jcolumn_global(1:1), value_at_jcol(1:1), INSERT_VALUES, ierr)
           ELSE
-
+!            nodes 2 and 4 within block => 8 and 9 within block below
              jcolumn_global(1) = process_below_left_top_inner_node + (i-indx_x_min-1)  ! BELOW
              jcolumn_global(2) = irow_global-1                                         ! LEFT
              jcolumn_global(3) = irow_global                                           ! CENTER
              jcolumn_global(4) = irow_global+1                                         ! RIGHT
-             jcolumn_global(5) = irow_global + (iend-ibegin+1)                         ! ABOVE
+             jcolumn_global(5) = irow_global + solved_row                              ! ABOVE
+
+             jcolumn_global(6) = jcolumn_global(5) + 1 !NE
+             jcolumn_global(7) = jcolumn_global(1) + 1 !SE
+             jcolumn_global(8) = jcolumn_global(1) - 1 !SW
+             jcolumn_global(9) = jcolumn_global(5) - 1 !NW
 
 ! check whether the point is inside or at the surface of any inner object
              CALL FIND_INNER_OBJECT_CONTAINING_POINT(i, indx_y_min+1, nio, position_flag)
@@ -429,7 +561,7 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
 !                   value_at_jcol(5) = 0.25_8
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !                CASE (4)
 !! dielectric surface on the left
 !                   value_at_jcol(1) = 0.25_8
@@ -437,7 +569,7 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
 !                   value_at_jcol(5) = 0.25_8
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !                CASE (2)
 !! dielectric surface above
 !                   value_at_jcol(1) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
@@ -445,7 +577,7 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.25_8
 !                   value_at_jcol(5) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !                CASE (6)
 !! dielectric surface below
 !                   value_at_jcol(1) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
@@ -453,20 +585,38 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.25_8
 !                   value_at_jcol(5) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
                 CASE DEFAULT 
 ! inside dielectric, inside plasma, or in a corner of a dielectric object
-                   value_at_jcol(1) =   eps_i_jshifted(i,j)
-                   value_at_jcol(2) =   eps_ishifted_j(i,j)
-                   value_at_jcol(3) = -(eps_i_jshifted(i,j) + eps_i_jshifted(i,j+1) + eps_ishifted_j(i,j) + eps_ishifted_j(i+1,j))
-                   value_at_jcol(4) =   eps_ishifted_j(i+1,j)
-                   value_at_jcol(5) =   eps_i_jshifted(i,j+1)
 !                   value_at_jcol(1) = 0.25_8
 !                   value_at_jcol(2) = 0.25_8
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.25_8
 !                   value_at_jcol(5) = 0.25_8
-                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+                   e_Exy = eps12_left(i+1,j)
+                   e_Wxy = eps12_left(i,j)
+                   e_Nyx = eps21_down(i,j+1)
+                   e_Syx = eps21_down(i,j)
+                   c_NS = 0.25_8 * (e_Wxy - e_Exy)
+                   c_EW = 0.25_8 * (e_Nyx - e_Syx)
+
+                   e_Nyy = eps22_down(i,j+1)
+                   e_Syy = eps22_down(i,j)
+                   e_Exx = eps11_left(i+1,j)
+                   e_Wxx = eps11_left(i,j)
+
+                   value_at_jcol(1) = -( -c_NS - e_Syy) !S
+                   value_at_jcol(2) = -(  c_EW - e_Wxx) !W
+                   value_at_jcol(3) = -(  e_Exx + e_Wxx + e_Nyy + e_Syy ) !C
+                   value_at_jcol(4) = -( -c_EW - e_Exx) !E
+                   value_at_jcol(5) = -(  c_NS - e_Nyy) !N
+
+                   value_at_jcol(6) = -( -0.25_8 * (e_Exy + e_Nyx)) !NE
+                   value_at_jcol(7) = -(  0.25_8 * (e_Exy + e_Syx)) !SE
+                   value_at_jcol(8) = -( -0.25_8 * (e_Wxy + e_Syx)) !SW
+                   value_at_jcol(9) = -(  0.25_8 * (e_Nyx + e_Wxy)) !NW
+
+                   call MatSetValues(Amat, one, irow_global, nine, jcolumn_global(1:9), value_at_jcol(1:9), INSERT_VALUES, ierr) 
              END SELECT
           END IF   !### IF ((i.EQ.i_given_F_double_period_sys).AND.(j.EQ.j_given_F_double_period_sys)) THEN
        END DO   !### DO i = indx_x_min+2, indx_x_max-2
@@ -480,23 +630,31 @@ contains
        value_at_jcol(1) = 1.0_8
        call MatSetValues(Amat, one, irow_global, one, jcolumn_global(1:1), value_at_jcol(1:1), INSERT_VALUES, ierr)
     ELSE
-
-       IF (jbegin.EQ.indx_y_min) THEN                       ! BELOW
+       jcolumn_global(2) = irow_global - 1                  ! LEFT
+       jcolumn_global(3) = irow_global                      ! CENTER
+       jcolumn_global(5) = irow_global + solved_row         ! ABOVE
+       jcolumn_global(9) = jcolumn_global(5) - 1            ! NW
+       IF (bottom) THEN                      
 ! boundary object along the bottom border
-          jcolumn_global(1) = irow_global - (iend-ibegin+1)                         ! use the own node
+          jcolumn_global(1) = irow_global - solved_row      ! BELOW, use own node
        ELSE
 ! use a node from neighbor below
-          jcolumn_global(1) = process_below_left_top_inner_node + (i-indx_x_min-1)  ! use a node from the neighbor below
+          jcolumn_global(1) = process_below_left_top_inner_node + (i-indx_x_min-1) ! use a node from the neighbor below
        END IF
-       jcolumn_global(2) = irow_global-1                    ! LEFT
-       jcolumn_global(3) = irow_global                      ! CENTER
-       IF (iend.EQ.indx_x_max) THEN                         ! RIGHT
+       jcolumn_global(8) = jcolumn_global(1) - 1            ! SW, either own node or from below
+       IF (right) THEN                                      ! RIGHT
 ! boundary object along the right border
-          jcolumn_global(4) = irow_global+1                                         ! use the own node
+          jcolumn_global(4) = irow_global+1                 ! RIGHT, use own node
+          jcolumn_global(6) = irow_global + solved_row + 1  ! col(5) + 1
+          jcolumn_global(7) = jcolumn_global(1) + 1         ! SE, own or not
        ELSE
-          jcolumn_global(4) = process_right_bottom_left_inner_node                  ! use a node from the right neighbor
+          jcolumn_global(4) = process_right_bottom_left_inner_node ! use a node from the right neighbor
+          jcolumn_global(6) = process_right_bottom_left_inner_node + process_right_solved_nodes_row_length
        END IF
-       jcolumn_global(5) = irow_global + (iend-ibegin+1)    ! ABOVE
+       IF (bottom.and.(.not.right)) jcolumn_global(7) = jcolumn_global(4) - process_right_solved_nodes_row_length
+       IF((.not.bottom).and.(.not.right)) THEN ! but (process_below + 2) must exist in this case
+          jcolumn_global(7) = offset_of_block(Rank_of_process_below + 2) - process_right_solved_nodes_row_length 
+       END IF
 
 ! check whether the point is inside or at the surface of any inner object
        CALL FIND_INNER_OBJECT_CONTAINING_POINT(indx_x_max-1, indx_y_min+1, nio, position_flag)
@@ -514,7 +672,7 @@ contains
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
 !             value_at_jcol(5) = 0.25_8
-!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !          CASE (4)
 !! dielectric surface on the left
 !             value_at_jcol(1) = 0.25_8
@@ -522,7 +680,7 @@ contains
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
 !             value_at_jcol(5) = 0.25_8
-!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !          CASE (2)
 !! dielectric surface above
 !             value_at_jcol(1) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
@@ -530,7 +688,7 @@ contains
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.25_8
 !             value_at_jcol(5) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
-!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !          CASE (6)
 !! dielectric surface below
 !             value_at_jcol(1) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
@@ -538,20 +696,38 @@ contains
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.25_8
 !             value_at_jcol(5) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
-!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
           CASE DEFAULT 
 ! inside dielectric, inside plasma, or in a corner of a dielectric object
-             value_at_jcol(1) =   eps_i_jshifted(i,j)
-             value_at_jcol(2) =   eps_ishifted_j(i,j)
-             value_at_jcol(3) = -(eps_i_jshifted(i,j) + eps_i_jshifted(i,j+1) + eps_ishifted_j(i,j) + eps_ishifted_j(i+1,j))
-             value_at_jcol(4) =   eps_ishifted_j(i+1,j)
-             value_at_jcol(5) =   eps_i_jshifted(i,j+1)
 !             value_at_jcol(1) = 0.25_8
 !             value_at_jcol(2) = 0.25_8
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.25_8
 !             value_at_jcol(5) = 0.25_8
-             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+             e_Exy = eps12_left(i+1,j)
+             e_Wxy = eps12_left(i,j)
+             e_Nyx = eps21_down(i,j+1)
+             e_Syx = eps21_down(i,j)
+             c_NS = 0.25_8 * (e_Wxy - e_Exy)
+             c_EW = 0.25_8 * (e_Nyx - e_Syx)
+
+             e_Nyy = eps22_down(i,j+1)
+             e_Syy = eps22_down(i,j)
+             e_Exx = eps11_left(i+1,j)
+             e_Wxx = eps11_left(i,j)
+
+             value_at_jcol(1) = -( -c_NS - e_Syy) !S
+             value_at_jcol(2) = -(  c_EW - e_Wxx) !W
+             value_at_jcol(3) = -(  e_Exx + e_Wxx + e_Nyy + e_Syy ) !C
+             value_at_jcol(4) = -( -c_EW - e_Exx) !E
+             value_at_jcol(5) = -(  c_NS - e_Nyy) !N
+
+             value_at_jcol(6) = -( -0.25_8 * (e_Exy + e_Nyx)) !NE
+             value_at_jcol(7) = -(  0.25_8 * (e_Exy + e_Syx)) !SE
+             value_at_jcol(8) = -( -0.25_8 * (e_Wxy + e_Syx)) !SW
+             value_at_jcol(9) = -(  0.25_8 * (e_Nyx + e_Wxy)) !NW
+
+             call MatSetValues(Amat, one, irow_global, nine, jcolumn_global(1:9), value_at_jcol(1:9), INSERT_VALUES, ierr) 
        END SELECT
     END IF   !### IF ((i.EQ.i_given_F_double_period_sys).AND.(j.EQ.j_given_F_double_period_sys)) THEN
 
@@ -566,7 +742,7 @@ contains
     END IF
 
     DO j = indx_y_min+2, indx_y_max-2 !>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
+    ! loop in j, i to process interior nodes of a block
        i = indx_x_min
 
        IF (ibegin.EQ.indx_x_min) THEN
@@ -580,10 +756,13 @@ contains
           ELSE
 ! the left border is a symmetry plane
 ! use own nodes
-             jcolumn_global(1) = irow_global - (iend-ibegin+1)    ! BELOW
-             jcolumn_global(2) = irow_global                      ! CENTER
-             jcolumn_global(3) = irow_global+1                    ! RIGHT
-             jcolumn_global(4) = irow_global + (iend-ibegin+1)    ! ABOVE
+             jcolumn_global(1) = irow_global - solved_row    ! BELOW
+             jcolumn_global(2) = irow_global                 ! CENTER
+             jcolumn_global(3) = irow_global + 1             ! RIGHT
+             jcolumn_global(4) = irow_global + solved_row    ! ABOVE
+
+             jcolumn_global(5) = jcolumn_global(4) + 1       !NE with center node on symmetry line
+             jcolumn_global(6) = jcolumn_global(1) + 1       !SE
 
 ! check whether the point is inside or at the surface of any inner object
              CALL FIND_INNER_OBJECT_CONTAINING_POINT(indx_x_min, j, nio, position_flag)
@@ -614,15 +793,25 @@ contains
 !                   call MatSetValues(Amat, one, irow_global, four, jcolumn_global(1:4), value_at_jcol(1:4), INSERT_VALUES, ierr)              
                 CASE DEFAULT 
 ! inside dielectric or plasma
-                   value_at_jcol(1) =   eps_i_jshifted(i,j)
-                   value_at_jcol(2) = -(eps_i_jshifted(i,j) + eps_i_jshifted(i,j+1) + eps_ishifted_j(i+1,j) + eps_ishifted_j(i+1,j))
-                   value_at_jcol(3) =   eps_ishifted_j(i+1,j) + eps_ishifted_j(i+1,j)
-                   value_at_jcol(4) =   eps_i_jshifted(i,j+1)              
 !                   value_at_jcol(1) = 0.25_8
 !                   value_at_jcol(2) = -1.0_8
 !                   value_at_jcol(3) = 0.5_8
 !                   value_at_jcol(4) = 0.25_8
-                   call MatSetValues(Amat, one, irow_global, four, jcolumn_global(1:4), value_at_jcol(1:4), INSERT_VALUES, ierr) 
+
+                   e_Exy = eps12_left(i + 1,j)
+                   e_Syy = eps22_down(i,j)
+                   e_Nyy = eps22_down(i,j + 1)
+                   e_Exx = eps11_left(i + 1,j)
+
+                   value_at_jcol(1) = -( -e_Syy + 0.5_8 * e_Exy) !S
+                   value_at_jcol(2) = -(  e_Syy + e_Nyy + 2.0_8 * e_Exx) !C
+                   value_at_jcol(3) = -( -2.0_8 * e_Exx) !E
+                   value_at_jcol(4) = -( -e_Nyy - 0.5_8 * e_Exy) !N
+
+                   value_at_jcol(5) = -( -0.5_8 * e_Exy) !NE
+                   value_at_jcol(6) = -(  0.5_8 * e_Exy) !SE
+
+                   call MatSetValues(Amat, one, irow_global, six, jcolumn_global(1:6), value_at_jcol(1:6), INSERT_VALUES, ierr) 
              END SELECT
 
           END IF   !### IF (.NOT.block_has_symmetry_plane_X_left) THEN
@@ -630,7 +819,7 @@ contains
 
 !       i = indx_x_min+1
 
-       i = indx_x_min+1
+       i = indx_x_min + 1
        irow_global = irow_global + 1
 
        IF ((i.EQ.i_given_F_double_period_sys).AND.(j.EQ.j_given_F_double_period_sys)) THEN
@@ -639,16 +828,22 @@ contains
           call MatSetValues(Amat, one, irow_global, one, jcolumn_global(1:1), value_at_jcol(1:1), INSERT_VALUES, ierr)
        ELSE
 
-          jcolumn_global(1) = irow_global - (iend-ibegin+1)    ! BELOW
-          IF (ibegin.EQ.indx_x_min) THEN                       ! LEFT
+          jcolumn_global(1) = irow_global - solved_row   ! BELOW
+          IF (left) THEN                       
 ! boundary object along the left border
-             jcolumn_global(2) = irow_global-1                                                                                     ! use the own node
-          ELSE
-             jcolumn_global(2) = process_left_bottom_right_inner_node + (j-indx_y_min-1) * process_left_solved_nodes_row_length     ! use a node from the left neighbor
+             jcolumn_global(2) = irow_global - 1 ! LEFT, own node
+             jcolumn_global(8) = jcolumn_global(2) - solved_row !SW
+             jcolumn_global(9) = jcolumn_global(2) + solved_row !NW
+          ELSE ! use a node from the left neighbor
+             jcolumn_global(2) = process_left_bottom_right_inner_node + (j-indx_y_min-1) * process_left_solved_nodes_row_length
+             jcolumn_global(8) = jcolumn_global(2) - process_left_solved_nodes_row_length !SW
+             jcolumn_global(9) = jcolumn_global(2) + process_left_solved_nodes_row_length !NW
           END IF
-          jcolumn_global(3) = irow_global                      ! CENTER
-          jcolumn_global(4) = irow_global+1                    ! RIGHT
-          jcolumn_global(5) = irow_global + (iend-ibegin+1)    ! ABOVE
+          jcolumn_global(3) = irow_global                 ! CENTER
+          jcolumn_global(4) = irow_global + 1             ! RIGHT
+          jcolumn_global(5) = irow_global + solved_row    ! ABOVE
+          jcolumn_global(6) = jcolumn_global(5) + 1       ! NE
+          jcolumn_global(7) = jcolumn_global(1) + 1       ! SE
 
 ! check whether the point is inside or at the surface of any inner object
           CALL FIND_INNER_OBJECT_CONTAINING_POINT(indx_x_min+1, j, nio, position_flag)
@@ -666,7 +861,7 @@ contains
 !                value_at_jcol(3) = -1.0_8
 !                value_at_jcol(4) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
 !                value_at_jcol(5) = 0.25_8
-!                call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !             CASE (4)
 !! dielectric surface on the left
 !                value_at_jcol(1) = 0.25_8
@@ -674,7 +869,7 @@ contains
 !                value_at_jcol(3) = -1.0_8
 !                value_at_jcol(4) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
 !                value_at_jcol(5) = 0.25_8
-!                call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !             CASE (2)
 !! dielectric surface above
 !                value_at_jcol(1) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
@@ -682,7 +877,7 @@ contains
 !                value_at_jcol(3) = -1.0_8
 !                value_at_jcol(4) = 0.25_8
 !                value_at_jcol(5) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
-!                call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !             CASE (6)
 !! dielectric surface below
 !                value_at_jcol(1) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
@@ -690,24 +885,43 @@ contains
 !                value_at_jcol(3) = -1.0_8
 !                value_at_jcol(4) = 0.25_8
 !                value_at_jcol(5) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
-!                call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
              CASE DEFAULT 
 ! inside dielectric, inside plasma, or in a corner of a dielectric object
-                value_at_jcol(1) =   eps_i_jshifted(i,j)
-                value_at_jcol(2) =   eps_ishifted_j(i,j)
-                value_at_jcol(3) = -(eps_i_jshifted(i,j) + eps_i_jshifted(i,j+1) + eps_ishifted_j(i,j) + eps_ishifted_j(i+1,j))
-                value_at_jcol(4) =   eps_ishifted_j(i+1,j)
-                value_at_jcol(5) =   eps_i_jshifted(i,j+1)
 !                value_at_jcol(1) = 0.25_8
 !                value_at_jcol(2) = 0.25_8
 !                value_at_jcol(3) = -1.0_8
 !                value_at_jcol(4) = 0.25_8
 !                value_at_jcol(5) = 0.25_8
-                call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+
+                e_Exy = eps12_left(i+1,j)
+                e_Wxy = eps12_left(i,j)
+                e_Nyx = eps21_down(i,j+1)
+                e_Syx = eps21_down(i,j)
+                c_NS = 0.25_8 * (e_Wxy - e_Exy)
+                c_EW = 0.25_8 * (e_Nyx - e_Syx)
+
+                e_Nyy = eps22_down(i,j+1)
+                e_Syy = eps22_down(i,j)
+                e_Exx = eps11_left(i+1,j)
+                e_Wxx = eps11_left(i,j)
+
+                value_at_jcol(1) = -( -c_NS - e_Syy) !S
+                value_at_jcol(2) = -(  c_EW - e_Wxx) !W
+                value_at_jcol(3) = -(  e_Exx + e_Wxx + e_Nyy + e_Syy ) !C
+                value_at_jcol(4) = -( -c_EW - e_Exx) !E
+                value_at_jcol(5) = -(  c_NS - e_Nyy) !N
+
+                value_at_jcol(6) = -( -0.25_8 * (e_Exy + e_Nyx)) !NE
+                value_at_jcol(7) = -(  0.25_8 * (e_Exy + e_Syx)) !SE
+                value_at_jcol(8) = -( -0.25_8 * (e_Wxy + e_Syx)) !SW
+                value_at_jcol(9) = -(  0.25_8 * (e_Nyx + e_Wxy)) !NW
+
+                call MatSetValues(Amat, one, irow_global, nine, jcolumn_global(1:9), value_at_jcol(1:9), INSERT_VALUES, ierr) 
           END SELECT
        END IF   !### IF ((i.EQ.i_given_F_double_period_sys).AND.(j.EQ.j_given_F_double_period_sys)) THEN
 
-       DO i = indx_x_min+2, indx_x_max-2
+       DO i = indx_x_min+2, indx_x_max-2 !inner loop
           irow_global = irow_global + 1
 
           IF ((i.EQ.i_given_F_double_period_sys).AND.(j.EQ.j_given_F_double_period_sys)) THEN
@@ -716,11 +930,16 @@ contains
              call MatSetValues(Amat, one, irow_global, one, jcolumn_global(1:1), value_at_jcol(1:1), INSERT_VALUES, ierr)
           ELSE
 
-             jcolumn_global(1) = irow_global - (iend-ibegin+1)    ! BELOW
+             jcolumn_global(1) = irow_global - solved_row         ! BELOW
              jcolumn_global(2) = irow_global-1                    ! LEFT
              jcolumn_global(3) = irow_global                      ! CENTER
              jcolumn_global(4) = irow_global+1                    ! RIGHT
-             jcolumn_global(5) = irow_global + (iend-ibegin+1)    ! ABOVE
+             jcolumn_global(5) = irow_global + solved_row         ! ABOVE
+
+             jcolumn_global(6) = irow_global + solved_row + 1
+             jcolumn_global(7) = irow_global - solved_row + 1
+             jcolumn_global(8) = irow_global - solved_row - 1
+             jcolumn_global(9) = irow_global + solved_row - 1          
 
 ! check whether the point is inside or at the surface of any inner object
              CALL FIND_INNER_OBJECT_CONTAINING_POINT(i, j, nio, position_flag)
@@ -738,7 +957,7 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
 !                   value_at_jcol(5) = 0.25_8
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !                CASE (4)
 !! dielectric surface on the left
 !                   value_at_jcol(1) = 0.25_8
@@ -746,7 +965,7 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
 !                   value_at_jcol(5) = 0.25_8
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !                CASE (2)
 !! dielectric surface above
 !                   value_at_jcol(1) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
@@ -754,7 +973,7 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.25_8
 !                   value_at_jcol(5) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !                CASE (6)
 !! dielectric surface below
 !                   value_at_jcol(1) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
@@ -762,25 +981,44 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.25_8
 !                   value_at_jcol(5) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
                 CASE DEFAULT 
 ! inside dielectric, inside plasma, or in a corner of a dielectric object
-                   value_at_jcol(1) =   eps_i_jshifted(i,j)
-                   value_at_jcol(2) =   eps_ishifted_j(i,j)
-                   value_at_jcol(3) = -(eps_i_jshifted(i,j) + eps_i_jshifted(i,j+1) + eps_ishifted_j(i,j) + eps_ishifted_j(i+1,j))
-                   value_at_jcol(4) =   eps_ishifted_j(i+1,j)
-                   value_at_jcol(5) =   eps_i_jshifted(i,j+1)
 !                   value_at_jcol(1) = 0.25_8
 !                   value_at_jcol(2) = 0.25_8
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.25_8
 !                   value_at_jcol(5) = 0.25_8
-                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+
+                   e_Exy = eps12_left(i+1,j)
+                   e_Wxy = eps12_left(i,j)
+                   e_Nyx = eps21_down(i,j+1)
+                   e_Syx = eps21_down(i,j)
+                   c_NS = 0.25_8 * (e_Wxy - e_Exy)
+                   c_EW = 0.25_8 * (e_Nyx - e_Syx)
+
+                   e_Nyy = eps22_down(i,j+1)
+                   e_Syy = eps22_down(i,j)
+                   e_Exx = eps11_left(i+1,j)
+                   e_Wxx = eps11_left(i,j)
+
+                   value_at_jcol(1) = -( -c_NS - e_Syy) !S
+                   value_at_jcol(2) = -(  c_EW - e_Wxx) !W
+                   value_at_jcol(3) = -(  e_Exx + e_Wxx + e_Nyy + e_Syy ) !C
+                   value_at_jcol(4) = -( -c_EW - e_Exx) !E
+                   value_at_jcol(5) = -(  c_NS - e_Nyy) !N
+
+                   value_at_jcol(6) = -( -0.25_8 * (e_Exy + e_Nyx)) !NE
+                   value_at_jcol(7) = -(  0.25_8 * (e_Exy + e_Syx)) !SE
+                   value_at_jcol(8) = -( -0.25_8 * (e_Wxy + e_Syx)) !SW
+                   value_at_jcol(9) = -(  0.25_8 * (e_Nyx + e_Wxy)) !NW
+
+                   call MatSetValues(Amat, one, irow_global, nine, jcolumn_global(1:9), value_at_jcol(1:9), INSERT_VALUES, ierr) 
              END SELECT
           END IF   !### IF ((i.EQ.i_given_F_double_period_sys).AND.(j.EQ.j_given_F_double_period_sys)) THEN
        END DO   !### DO i = indx_x_min+2, indx_x_max-2
 
-       i = indx_x_max-1
+       i = indx_x_max - 1
        irow_global = irow_global + 1
 
        IF ((i.EQ.i_given_F_double_period_sys).AND.(j.EQ.j_given_F_double_period_sys)) THEN
@@ -789,16 +1027,23 @@ contains
           call MatSetValues(Amat, one, irow_global, one, jcolumn_global(1:1), value_at_jcol(1:1), INSERT_VALUES, ierr)
        ELSE
 
-          jcolumn_global(1) = irow_global - (iend-ibegin+1)       ! BELOW
-          jcolumn_global(2) = irow_global-1                       ! LEFT
-          jcolumn_global(3) = irow_global                         ! CENTER
-          IF (iend.EQ.indx_x_max) THEN                            ! RIGHT
+          jcolumn_global(1) = irow_global - solved_row       ! BELOW
+          jcolumn_global(2) = irow_global - 1                ! LEFT
+          jcolumn_global(3) = irow_global                    ! CENTER
+          IF (right) THEN                                    ! RIGHT
 ! boundary object along the right border
-             jcolumn_global(4) = irow_global+1                                                                                   ! use the own node
+             jcolumn_global(4) = irow_global + 1             ! RIGHT, use own node
+             jcolumn_global(6) = irow_global + solved_row + 1 ! NE, own
+             jcolumn_global(7) = irow_global - solved_row + 1 ! SE, own
           ELSE
-             jcolumn_global(4) = process_right_bottom_left_inner_node + (j-indx_y_min-1) * process_right_solved_nodes_row_length  ! use a node from the right neighbor
+             jcolumn_global(4) = process_right_bottom_left_inner_node + (j-indx_y_min-1) * process_right_solved_nodes_row_length 
+             ! use a node from the right neighbor
+             jcolumn_global(6) = jcolumn_global(4) + process_right_solved_nodes_row_length ! NE !signs were wrong for (6) and (7)?
+             jcolumn_global(7) = jcolumn_global(4) - process_right_solved_nodes_row_length ! SE !06/27/22
           END IF
-          jcolumn_global(5) = irow_global + (iend-ibegin+1)    ! ABOVE
+          jcolumn_global(5) = irow_global + solved_row     ! ABOVE
+          jcolumn_global(8) = irow_global - solved_row - 1 ! SW
+          jcolumn_global(9) = irow_global + solved_row - 1 ! NW
 
 ! check whether the point is inside or at the surface of any inner object
           CALL FIND_INNER_OBJECT_CONTAINING_POINT(indx_x_max-1, j, nio, position_flag)
@@ -816,7 +1061,7 @@ contains
 !                value_at_jcol(3) = -1.0_8
 !                value_at_jcol(4) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
 !                value_at_jcol(5) = 0.25_8
-!                call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !             CASE (4)
 !! dielectric surface on the left
 !                value_at_jcol(1) = 0.25_8
@@ -824,7 +1069,7 @@ contains
 !                value_at_jcol(3) = -1.0_8
 !                value_at_jcol(4) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
 !                value_at_jcol(5) = 0.25_8
-!                call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !             CASE (2)
 !! dielectric surface above
 !                value_at_jcol(1) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
@@ -832,7 +1077,7 @@ contains
 !                value_at_jcol(3) = -1.0_8
 !                value_at_jcol(4) = 0.25_8
 !                value_at_jcol(5) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
-!                call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !             CASE (6)
 !! dielectric surface below
 !                value_at_jcol(1) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
@@ -840,20 +1085,39 @@ contains
 !                value_at_jcol(3) = -1.0_8
 !                value_at_jcol(4) = 0.25_8
 !                value_at_jcol(5) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
-!                call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
              CASE DEFAULT 
 ! inside dielectric, inside plasma, or in a corner of a dielectric object
-                value_at_jcol(1) =   eps_i_jshifted(i,j)
-                value_at_jcol(2) =   eps_ishifted_j(i,j)
-                value_at_jcol(3) = -(eps_i_jshifted(i,j) + eps_i_jshifted(i,j+1) + eps_ishifted_j(i,j) + eps_ishifted_j(i+1,j))
-                value_at_jcol(4) =   eps_ishifted_j(i+1,j)
-                value_at_jcol(5) =   eps_i_jshifted(i,j+1)
 !                value_at_jcol(1) = 0.25_8
 !                value_at_jcol(2) = 0.25_8
 !                value_at_jcol(3) = -1.0_8
 !                value_at_jcol(4) = 0.25_8
 !                value_at_jcol(5) = 0.25_8
-                call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+
+                e_Exy = eps12_left(i+1,j)
+                e_Wxy = eps12_left(i,j)
+                e_Nyx = eps21_down(i,j+1)
+                e_Syx = eps21_down(i,j)
+                c_NS = 0.25_8 * (e_Wxy - e_Exy)
+                c_EW = 0.25_8 * (e_Nyx - e_Syx)
+
+                e_Nyy = eps22_down(i,j+1)
+                e_Syy = eps22_down(i,j)
+                e_Exx = eps11_left(i+1,j)
+                e_Wxx = eps11_left(i,j)
+
+                value_at_jcol(1) = -( -c_NS - e_Syy) !S
+                value_at_jcol(2) = -(  c_EW - e_Wxx) !W
+                value_at_jcol(3) = -(  e_Exx + e_Wxx + e_Nyy + e_Syy ) !C
+                value_at_jcol(4) = -( -c_EW - e_Exx) !E
+                value_at_jcol(5) = -(  c_NS - e_Nyy) !N
+
+                value_at_jcol(6) = -( -0.25_8 * (e_Exy + e_Nyx)) !NE
+                value_at_jcol(7) = -(  0.25_8 * (e_Exy + e_Syx)) !SE
+                value_at_jcol(8) = -( -0.25_8 * (e_Wxy + e_Syx)) !SW
+                value_at_jcol(9) = -(  0.25_8 * (e_Nyx + e_Wxy)) !NW
+
+                call MatSetValues(Amat, one, irow_global, nine, jcolumn_global(1:9), value_at_jcol(1:9), INSERT_VALUES, ierr) 
           END SELECT
        END IF   !### IF ((i.EQ.i_given_F_double_period_sys).AND.(j.EQ.j_given_F_double_period_sys)) THEN
 
@@ -869,7 +1133,7 @@ contains
 
     END DO !### DO j = indx_y_min+2, indx_y_max-2
 
-    j = indx_y_max-1 !>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    j = indx_y_max -1 !>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
     i = indx_x_min
 
@@ -883,15 +1147,18 @@ contains
           call MatSetValues(Amat, one, irow_global, one, jcolumn_global(1:1), value_at_jcol(1:1), INSERT_VALUES, ierr) 
        ELSE
 ! the left border is a symmetry plane
-          jcolumn_global(1) = irow_global - (iend-ibegin+1)    ! BELOW
-          jcolumn_global(2) = irow_global                      ! CENTER
-          jcolumn_global(3) = irow_global+1                    ! RIGHT
-          IF (jend.EQ.indx_y_max) THEN                         ! ABOVE
+          jcolumn_global(1) = irow_global - solved_row      ! BELOW
+          jcolumn_global(2) = irow_global                   ! CENTER
+          jcolumn_global(3) = irow_global + 1               ! RIGHT
+          IF (top) THEN                        
 ! boundary object along the top border
-             jcolumn_global(4) = irow_global + (iend-ibegin+1)                         ! use the own node
+             jcolumn_global(4) = irow_global + solved_row                     ! ABOVE, use own node
           ELSE
-             jcolumn_global(4) = process_above_left_bottom_inner_node-1                ! use a node from the neighbor above
+             jcolumn_global(4) = process_above_left_bottom_inner_node - 1     ! ABOVE, use a node from the neighbor above
           END IF
+
+          jcolumn_global(5) = jcolumn_global(4) + 1  ! NE with center node on symmetry line
+          jcolumn_global(6) = jcolumn_global(1) + 1  ! SE
 
 ! check whether the point is inside or at the surface of any inner object
           CALL FIND_INNER_OBJECT_CONTAINING_POINT(indx_x_min, indx_y_max-1, nio, position_flag)
@@ -922,15 +1189,25 @@ contains
 !                call MatSetValues(Amat, one, irow_global, four, jcolumn_global(1:4), value_at_jcol(1:4), INSERT_VALUES, ierr)              
              CASE DEFAULT 
 ! inside dielectric or plasma
-                value_at_jcol(1) =   eps_i_jshifted(i,j)
-                value_at_jcol(2) = -(eps_i_jshifted(i,j) + eps_i_jshifted(i,j+1) + eps_ishifted_j(i+1,j) + eps_ishifted_j(i+1,j))
-                value_at_jcol(3) =   eps_ishifted_j(i+1,j) + eps_ishifted_j(i+1,j)
-                value_at_jcol(4) =   eps_i_jshifted(i,j+1)
 !                value_at_jcol(1) = 0.25_8
 !                value_at_jcol(2) = -1.0_8
 !                value_at_jcol(3) = 0.5_8
 !                value_at_jcol(4) = 0.25_8
-                call MatSetValues(Amat, one, irow_global, four, jcolumn_global(1:4), value_at_jcol(1:4), INSERT_VALUES, ierr) 
+
+                e_Exy = eps12_left(i + 1,j)
+                e_Syy = eps22_down(i,j)
+                e_Nyy = eps22_down(i,j + 1)
+                e_Exx = eps11_left(i + 1,j)
+
+                value_at_jcol(1) = -( -e_Syy + 0.5_8 * e_Exy) !S
+                value_at_jcol(2) = -(  e_Syy + e_Nyy + 2.0_8 * e_Exx) !C
+                value_at_jcol(3) = -( -2.0_8 * e_Exx) !E
+                value_at_jcol(4) = -( -e_Nyy - 0.5_8 * e_Exy) !N
+
+                value_at_jcol(5) = -( -0.5_8 * e_Exy) !NE
+                value_at_jcol(6) = -(  0.5_8 * e_Exy) !SE
+
+                call MatSetValues(Amat, one, irow_global, six, jcolumn_global(1:6), value_at_jcol(1:6), INSERT_VALUES, ierr) 
           END SELECT
 
        END IF
@@ -938,7 +1215,7 @@ contains
 
 !    i = indx_x_min+1
 
-    i = indx_x_min+1
+    i = indx_x_min + 1
     irow_global = irow_global + 1
 
     IF ((i.EQ.i_given_F_double_period_sys).AND.(j.EQ.j_given_F_double_period_sys)) THEN
@@ -947,21 +1224,30 @@ contains
        call MatSetValues(Amat, one, irow_global, one, jcolumn_global(1:1), value_at_jcol(1:1), INSERT_VALUES, ierr)
     ELSE
 
-       jcolumn_global(1) = irow_global - (iend-ibegin+1)    ! BELOW
-       IF (ibegin.EQ.indx_x_min) THEN                       ! LEFT
-! boundary object along the left border
-          jcolumn_global(2) = irow_global-1                                                                                      ! use the own node
-       ELSE
-          jcolumn_global(2) = process_left_bottom_right_inner_node + (j-indx_y_min-1) * process_left_solved_nodes_row_length     ! use a node from the left neighbor
-       END IF
-       jcolumn_global(3) = irow_global                      ! CENTER
-       jcolumn_global(4) = irow_global+1                    ! RIGHT
-       IF (jend.EQ.indx_y_max) THEN                         ! ABOVE
+       jcolumn_global(1) = irow_global - solved_row   ! BELOW 
+       jcolumn_global(3) = irow_global                ! CENTER
+       jcolumn_global(4) = irow_global + 1            ! RIGHT
+       jcolumn_global(7) = jcolumn_global(1) + 1      ! SE
+       IF (top) THEN                        
 ! boundary object along the top border
-          jcolumn_global(5) = irow_global + (iend-ibegin+1)                         ! use the own node
+          jcolumn_global(5) = irow_global + solved_row       ! ABOVE, use own node
        ELSE
-          jcolumn_global(5) = process_above_left_bottom_inner_node                  ! use a node from the neighbor above
+          jcolumn_global(5) = process_above_left_bottom_inner_node ! ABOVE, use a node from the neighbor above
        END IF
+       jcolumn_global(6) = jcolumn_global(5) + 1            ! NE
+       IF (left) THEN                       ! LEFT
+! boundary object along the left border
+          jcolumn_global(2) = irow_global - 1       ! LEFT, use own node
+          jcolumn_global(8) = jcolumn_global(1) - 1 ! SW
+          jcolumn_global(9) = jcolumn_global(5) - 1 ! NW, own node or from above
+       ELSE  ! use a node from the left neighbor
+          jcolumn_global(2) = process_left_bottom_right_inner_node + (j-indx_y_min-1) * process_left_solved_nodes_row_length     
+          jcolumn_global(8) = jcolumn_global(2)  - process_left_solved_nodes_row_length
+       END IF
+       IF ((.not.left).and.top) jcolumn_global(9) = jcolumn_global(2) + process_left_solved_nodes_row_length 
+       IF ((.not.left).and.(.not.top)) THEN 
+          jcolumn_global(9) = offset_of_block(Rank_of_process_above - 1) + process_left_solved_nodes_row_length - 1
+       END IF      
 
 ! check whether the point is inside or at the surface of any inner object
        CALL FIND_INNER_OBJECT_CONTAINING_POINT(indx_x_min+1, indx_y_max-1, nio, position_flag)
@@ -979,7 +1265,7 @@ contains
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
 !             value_at_jcol(5) = 0.25_8
-!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !          CASE (4)
 !! dielectric surface on the left
 !             value_at_jcol(1) = 0.25_8
@@ -987,7 +1273,7 @@ contains
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
 !             value_at_jcol(5) = 0.25_8
-!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !          CASE (2)
 !! dielectric surface above
 !             value_at_jcol(1) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
@@ -995,7 +1281,7 @@ contains
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.25_8
 !             value_at_jcol(5) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
-!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !          CASE (6)
 !! dielectric surface below
 !             value_at_jcol(1) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
@@ -1003,24 +1289,43 @@ contains
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.25_8
 !             value_at_jcol(5) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
-!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
           CASE DEFAULT 
 ! inside dielectric, inside plasma, or in a corner of a dielectric object
-             value_at_jcol(1) =   eps_i_jshifted(i,j)
-             value_at_jcol(2) =   eps_ishifted_j(i,j)
-             value_at_jcol(3) = -(eps_i_jshifted(i,j) + eps_i_jshifted(i,j+1) + eps_ishifted_j(i,j) + eps_ishifted_j(i+1,j))
-             value_at_jcol(4) =   eps_ishifted_j(i+1,j)
-             value_at_jcol(5) =   eps_i_jshifted(i,j+1)
 !             value_at_jcol(1) = 0.25_8
 !             value_at_jcol(2) = 0.25_8
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.25_8
 !             value_at_jcol(5) = 0.25_8
-             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+
+             e_Exy = eps12_left(i+1,j)
+             e_Wxy = eps12_left(i,j)
+             e_Nyx = eps21_down(i,j+1)
+             e_Syx = eps21_down(i,j)
+             c_NS = 0.25_8 * (e_Wxy - e_Exy)
+             c_EW = 0.25_8 * (e_Nyx - e_Syx)
+
+             e_Nyy = eps22_down(i,j+1)
+             e_Syy = eps22_down(i,j)
+             e_Exx = eps11_left(i+1,j)
+             e_Wxx = eps11_left(i,j)
+
+             value_at_jcol(1) = -( -c_NS - e_Syy) !S
+             value_at_jcol(2) = -(  c_EW - e_Wxx) !W
+             value_at_jcol(3) = -(  e_Exx + e_Wxx + e_Nyy + e_Syy ) !C
+             value_at_jcol(4) = -( -c_EW - e_Exx) !E
+             value_at_jcol(5) = -(  c_NS - e_Nyy) !N
+
+             value_at_jcol(6) = -( -0.25_8 * (e_Exy + e_Nyx)) !NE
+             value_at_jcol(7) = -(  0.25_8 * (e_Exy + e_Syx)) !SE
+             value_at_jcol(8) = -( -0.25_8 * (e_Wxy + e_Syx)) !SW
+             value_at_jcol(9) = -(  0.25_8 * (e_Nyx + e_Wxy)) !NW
+
+             call MatSetValues(Amat, one, irow_global, nine, jcolumn_global(1:9), value_at_jcol(1:9), INSERT_VALUES, ierr) 
        END SELECT
     END IF   !### IF ((i.EQ.i_given_F_double_period_sys).AND.(j.EQ.j_given_F_double_period_sys)) THEN
 
-    IF (jend.EQ.indx_y_max) THEN
+    IF (top) THEN
 ! boundary object along the top border
        DO i = indx_x_min+2, indx_x_max-2
           irow_global = irow_global + 1
@@ -1031,11 +1336,17 @@ contains
              call MatSetValues(Amat, one, irow_global, one, jcolumn_global(1:1), value_at_jcol(1:1), INSERT_VALUES, ierr)
           ELSE
 
-             jcolumn_global(1) = irow_global - (iend-ibegin+1)    ! BELOW
-             jcolumn_global(2) = irow_global-1                    ! LEFT
-             jcolumn_global(3) = irow_global                      ! CENTER
-             jcolumn_global(4) = irow_global+1                    ! RIGHT
-             jcolumn_global(5) = irow_global + (iend-ibegin+1)    ! ABOVE
+             jcolumn_global(1) = irow_global - solved_row    ! BELOW
+             jcolumn_global(2) = irow_global - 1             ! LEFT
+             jcolumn_global(3) = irow_global                 ! CENTER
+             jcolumn_global(4) = irow_global + 1             ! RIGHT
+             jcolumn_global(5) = irow_global + solved_row    ! ABOVE
+
+             jcolumn_global(6) = irow_global + solved_row + 1 ! NE
+             jcolumn_global(7) = irow_global - solved_row + 1 ! SE
+             jcolumn_global(8) = irow_global - solved_row - 1 ! SW
+             jcolumn_global(9) = irow_global + solved_row - 1 ! NW
+
 
 ! check whether the point is inside or at the surface of any inner object
              CALL FIND_INNER_OBJECT_CONTAINING_POINT(i, indx_y_max-1, nio, position_flag)
@@ -1053,7 +1364,7 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
 !                   value_at_jcol(5) = 0.25_8
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !                CASE (4)
 !! dielectric surface on the left
 !                   value_at_jcol(1) = 0.25_8
@@ -1061,7 +1372,7 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
 !                   value_at_jcol(5) = 0.25_8
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !                CASE (2)
 !! dielectric surface above
 !                   value_at_jcol(1) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
@@ -1069,7 +1380,7 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.25_8
 !                   value_at_jcol(5) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !                CASE (6)
 !! dielectric surface below
 !                   value_at_jcol(1) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
@@ -1077,20 +1388,39 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.25_8
 !                   value_at_jcol(5) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
                 CASE DEFAULT 
 ! inside dielectric, inside plasma, or in a corner of a dielectric object
-                   value_at_jcol(1) =   eps_i_jshifted(i,j)
-                   value_at_jcol(2) =   eps_ishifted_j(i,j)
-                   value_at_jcol(3) = -(eps_i_jshifted(i,j) + eps_i_jshifted(i,j+1) + eps_ishifted_j(i,j) + eps_ishifted_j(i+1,j))
-                   value_at_jcol(4) =   eps_ishifted_j(i+1,j)
-                   value_at_jcol(5) =   eps_i_jshifted(i,j+1)
 !                   value_at_jcol(1) = 0.25_8
 !                   value_at_jcol(2) = 0.25_8
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.25_8
 !                   value_at_jcol(5) = 0.25_8
-                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+
+                   e_Exy = eps12_left(i+1,j)
+                   e_Wxy = eps12_left(i,j)
+                   e_Nyx = eps21_down(i,j+1)
+                   e_Syx = eps21_down(i,j)
+                   c_NS = 0.25_8 * (e_Wxy - e_Exy)
+                   c_EW = 0.25_8 * (e_Nyx - e_Syx)
+
+                   e_Nyy = eps22_down(i,j+1)
+                   e_Syy = eps22_down(i,j)
+                   e_Exx = eps11_left(i+1,j)
+                   e_Wxx = eps11_left(i,j)
+
+                   value_at_jcol(1) = -( -c_NS - e_Syy) !S
+                   value_at_jcol(2) = -(  c_EW - e_Wxx) !W
+                   value_at_jcol(3) = -(  e_Exx + e_Wxx + e_Nyy + e_Syy ) !C
+                   value_at_jcol(4) = -( -c_EW - e_Exx) !E
+                   value_at_jcol(5) = -(  c_NS - e_Nyy) !N
+
+                   value_at_jcol(6) = -( -0.25_8 * (e_Exy + e_Nyx)) !NE
+                   value_at_jcol(7) = -(  0.25_8 * (e_Exy + e_Syx)) !SE
+                   value_at_jcol(8) = -( -0.25_8 * (e_Wxy + e_Syx)) !SW
+                   value_at_jcol(9) = -(  0.25_8 * (e_Nyx + e_Wxy)) !NW
+
+                   call MatSetValues(Amat, one, irow_global, nine, jcolumn_global(1:9), value_at_jcol(1:9), INSERT_VALUES, ierr) 
              END SELECT
           END IF   !### IF ((i.EQ.i_given_F_double_period_sys).AND.(j.EQ.j_given_F_double_period_sys)) THEN
        END DO   !### DO i = indx_x_min+2, indx_x_max-2
@@ -1105,11 +1435,16 @@ contains
              call MatSetValues(Amat, one, irow_global, one, jcolumn_global(1:1), value_at_jcol(1:1), INSERT_VALUES, ierr)
           ELSE
 
-             jcolumn_global(1) = irow_global - (iend-ibegin+1)                            ! BELOW
+             jcolumn_global(1) = irow_global - solved_row                                 ! BELOW
              jcolumn_global(2) = irow_global-1                                            ! LEFT
              jcolumn_global(3) = irow_global                                              ! CENTER
              jcolumn_global(4) = irow_global+1                                            ! RIGHT
              jcolumn_global(5) = process_above_left_bottom_inner_node + (i-indx_x_min-1)  ! ABOVE
+
+             jcolumn_global(6) = jcolumn_global(5) + 1 ! NE
+             jcolumn_global(7) = jcolumn_global(1) + 1 ! SE
+             jcolumn_global(8) = jcolumn_global(1) - 1 ! SW
+             jcolumn_global(9) = jcolumn_global(5) - 1 ! NW
 
 ! check whether the point is inside or at the surface of any inner object
              CALL FIND_INNER_OBJECT_CONTAINING_POINT(i, indx_y_max-1, nio, position_flag)
@@ -1127,7 +1462,7 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
 !                   value_at_jcol(5) = 0.25_8
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !                CASE (4)
 !! dielectric surface on the left
 !                   value_at_jcol(1) = 0.25_8
@@ -1135,7 +1470,7 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
 !                   value_at_jcol(5) = 0.25_8
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !                CASE (2)
 !! dielectric surface above
 !                   value_at_jcol(1) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
@@ -1143,7 +1478,7 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.25_8
 !                   value_at_jcol(5) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !                CASE (6)
 !! dielectric surface below
 !                   value_at_jcol(1) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
@@ -1151,26 +1486,45 @@ contains
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.25_8
 !                   value_at_jcol(5) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
-!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
                 CASE DEFAULT 
 ! inside dielectric, inside plasma, or in a corner of a dielectric object
-                   value_at_jcol(1) =   eps_i_jshifted(i,j)
-                   value_at_jcol(2) =   eps_ishifted_j(i,j)
-                   value_at_jcol(3) = -(eps_i_jshifted(i,j) + eps_i_jshifted(i,j+1) + eps_ishifted_j(i,j) + eps_ishifted_j(i+1,j))
-                   value_at_jcol(4) =   eps_ishifted_j(i+1,j)
-                   value_at_jcol(5) =   eps_i_jshifted(i,j+1)
 !                   value_at_jcol(1) = 0.25_8
 !                   value_at_jcol(2) = 0.25_8
 !                   value_at_jcol(3) = -1.0_8
 !                   value_at_jcol(4) = 0.25_8
 !                   value_at_jcol(5) = 0.25_8
-                   call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+
+                   e_Exy = eps12_left(i+1,j)
+                   e_Wxy = eps12_left(i,j)
+                   e_Nyx = eps21_down(i,j+1)
+                   e_Syx = eps21_down(i,j)
+                   c_NS = 0.25_8 * (e_Wxy - e_Exy)
+                   c_EW = 0.25_8 * (e_Nyx - e_Syx)
+
+                   e_Nyy = eps22_down(i,j+1)
+                   e_Syy = eps22_down(i,j)
+                   e_Exx = eps11_left(i+1,j)
+                   e_Wxx = eps11_left(i,j)
+
+                   value_at_jcol(1) = -( -c_NS - e_Syy) !S
+                   value_at_jcol(2) = -(  c_EW - e_Wxx) !W
+                   value_at_jcol(3) = -(  e_Exx + e_Wxx + e_Nyy + e_Syy ) !C
+                   value_at_jcol(4) = -( -c_EW - e_Exx) !E
+                   value_at_jcol(5) = -(  c_NS - e_Nyy) !N
+
+                   value_at_jcol(6) = -( -0.25_8 * (e_Exy + e_Nyx)) !NE
+                   value_at_jcol(7) = -(  0.25_8 * (e_Exy + e_Syx)) !SE
+                   value_at_jcol(8) = -( -0.25_8 * (e_Wxy + e_Syx)) !SW
+                   value_at_jcol(9) = -(  0.25_8 * (e_Nyx + e_Wxy)) !NW
+
+                   call MatSetValues(Amat, one, irow_global, nine, jcolumn_global(1:9), value_at_jcol(1:9), INSERT_VALUES, ierr) 
              END SELECT
           END IF   !### IF ((i.EQ.i_given_F_double_period_sys).AND.(j.EQ.j_given_F_double_period_sys)) THEN
        END DO   !### DO i = indx_x_min+2, indx_x_max-2
     END IF   !### IF (jend.EQ.indx_y_max) THEN
  
-    i = indx_x_max-1
+    i = indx_x_max - 1 !what us j here? j = indx_y_max - 1?
     irow_global = irow_global + 1
 
     IF ((i.EQ.i_given_F_double_period_sys).AND.(j.EQ.j_given_F_double_period_sys)) THEN
@@ -1179,21 +1533,29 @@ contains
        call MatSetValues(Amat, one, irow_global, one, jcolumn_global(1:1), value_at_jcol(1:1), INSERT_VALUES, ierr)
     ELSE
 
-       jcolumn_global(1) = irow_global - (iend-ibegin+1)    ! BELOW
-       jcolumn_global(2) = irow_global-1                    ! LEFT
-       jcolumn_global(3) = irow_global                      ! CENTER
-       IF (iend.EQ.indx_x_max) THEN                         ! RIGHT
-! boundary object along the right border
-          jcolumn_global(4) = irow_global+1                                                                                    ! use the own node
-       ELSE
-          jcolumn_global(4) = process_right_bottom_left_inner_node + (j-indx_y_min-1) * process_right_solved_nodes_row_length  ! use a node from the right neighbor
-       END IF
-       IF (jend.EQ.indx_y_max) THEN                         ! ABOVE
+       jcolumn_global(1) = irow_global - solved_row    ! BELOW
+       jcolumn_global(2) = irow_global - 1             ! LEFT
+       jcolumn_global(3) = irow_global                 ! CENTER
+       jcolumn_global(8) = jcolumn_global(1) - 1       ! SW
+       IF (top) THEN                 
 ! boundary object along the top border
-          jcolumn_global(5) = irow_global + (iend-ibegin+1)                            ! use the own node
+          jcolumn_global(5) = irow_global + solved_row  ! ABOVE, use own node
        ELSE
           jcolumn_global(5) = process_above_left_bottom_inner_node + (i-indx_x_min-1)  ! use a node from the neighbor above
        END IF
+       jcolumn_global(9) = jcolumn_global(5) - 1 ! NW
+       IF (right) THEN                         
+! boundary object along the right border
+          jcolumn_global(4) = irow_global + 1        ! RIGHT, use own node
+          jcolumn_global(6) = jcolumn_global(5) + 1  ! NE, own or above
+          jcolumn_global(7) = jcolumn_global(1) + 1  ! SE
+       ELSE
+          jcolumn_global(4) = process_right_bottom_left_inner_node + (j-indx_y_min-1) * process_right_solved_nodes_row_length  
+          ! use a node from the right neighbor
+          jcolumn_global(7) = jcolumn_global(4) - process_right_solved_nodes_row_length !SE
+       END IF
+       IF (top.and.(.not.right))        jcolumn_global(6) = jcolumn_global(4) + process_right_solved_nodes_row_length
+       IF ((.not.top).and.(.not.right)) jcolumn_global(6) = offset_of_block(Rank_of_process_above + 1) !1st inner node; 1st to solve
 
 ! check whether the point is inside or at the surface of any inner object
        CALL FIND_INNER_OBJECT_CONTAINING_POINT(indx_x_max-1, indx_y_max-1, nio, position_flag)
@@ -1211,7 +1573,7 @@ contains
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
 !             value_at_jcol(5) = 0.25_8
-!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !          CASE (4)
 !! dielectric surface on the left
 !             value_at_jcol(1) = 0.25_8
@@ -1219,7 +1581,7 @@ contains
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
 !             value_at_jcol(5) = 0.25_8
-!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !          CASE (2)
 !! dielectric surface above
 !             value_at_jcol(1) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
@@ -1227,7 +1589,7 @@ contains
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.25_8
 !             value_at_jcol(5) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
-!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
 !          CASE (6)
 !! dielectric surface below
 !             value_at_jcol(1) = 0.5_8 * whole_object(nio)%eps_diel / (1.0_8 + whole_object(nio)%eps_diel)
@@ -1235,20 +1597,39 @@ contains
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.25_8
 !             value_at_jcol(5) = 0.5_8 / (1.0_8 + whole_object(nio)%eps_diel)
-!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+!             call MatSetValues(Amat, one, irow_global, five, jcolumn_global(1:5), value_at_jcol(1:5), INSERT_VALUES, ierr) 
           CASE DEFAULT 
 ! inside dielectric, inside plasma, or in a corner of a dielectric object
-             value_at_jcol(1) =   eps_i_jshifted(i,j)
-             value_at_jcol(2) =   eps_ishifted_j(i,j)
-             value_at_jcol(3) = -(eps_i_jshifted(i,j) + eps_i_jshifted(i,j+1) + eps_ishifted_j(i,j) + eps_ishifted_j(i+1,j))
-             value_at_jcol(4) =   eps_ishifted_j(i+1,j)
-             value_at_jcol(5) =   eps_i_jshifted(i,j+1)
 !             value_at_jcol(1) = 0.25_8
 !             value_at_jcol(2) = 0.25_8
 !             value_at_jcol(3) = -1.0_8
 !             value_at_jcol(4) = 0.25_8
 !             value_at_jcol(5) = 0.25_8
-             call MatSetValues(Amat, one, irow_global, five, jcolumn_global, value_at_jcol, INSERT_VALUES, ierr) 
+
+             e_Exy = eps12_left(i+1,j)
+             e_Wxy = eps12_left(i,j)
+             e_Nyx = eps21_down(i,j+1)
+             e_Syx = eps21_down(i,j)
+             c_NS = 0.25_8 * (e_Wxy - e_Exy)
+             c_EW = 0.25_8 * (e_Nyx - e_Syx)
+
+             e_Nyy = eps22_down(i,j+1)
+             e_Syy = eps22_down(i,j)
+             e_Exx = eps11_left(i+1,j)
+             e_Wxx = eps11_left(i,j)
+
+             value_at_jcol(1) = -( -c_NS - e_Syy) !S
+             value_at_jcol(2) = -(  c_EW - e_Wxx) !W
+             value_at_jcol(3) = -(  e_Exx + e_Wxx + e_Nyy + e_Syy ) !C
+             value_at_jcol(4) = -( -c_EW - e_Exx) !E
+             value_at_jcol(5) = -(  c_NS - e_Nyy) !N
+
+             value_at_jcol(6) = -( -0.25_8 * (e_Exy + e_Nyx)) !NE
+             value_at_jcol(7) = -(  0.25_8 * (e_Exy + e_Syx)) !SE
+             value_at_jcol(8) = -( -0.25_8 * (e_Wxy + e_Syx)) !SW
+             value_at_jcol(9) = -(  0.25_8 * (e_Nyx + e_Wxy)) !NW
+
+             call MatSetValues(Amat, one, irow_global, nine, jcolumn_global(1:9), value_at_jcol(1:9), INSERT_VALUES, ierr) 
        END SELECT
     END IF   !### IF ((i.EQ.i_given_F_double_period_sys).AND.(j.EQ.j_given_F_double_period_sys)) THEN
 
@@ -1278,8 +1659,18 @@ contains
 
 ! end of initialization of matrix coefficients written by DS ---------------
 
-    DEALLOCATE(eps_ishifted_j, STAT=ALLOC_ERR)   ! eps_ishifted_j(i,j) is between nodes {i-1,j} and {i,j}
-    DEALLOCATE(eps_i_jshifted, STAT=ALLOC_ERR)   ! eps_i_jshifted(i,j) is between nodes {i,j-1} and {i,j}
+!    DEALLOCATE(eps_ishifted_j, STAT=ALLOC_ERR)   ! eps_ishifted_j(i,j) is between nodes {i-1,j} and {i,j}
+!    DEALLOCATE(eps_i_jshifted, STAT=ALLOC_ERR)   ! eps_i_jshifted(i,j) is between nodes {i,j-1} and {i,j}
+
+    DEALLOCATE(eps11_left, STAT=ALLOC_ERR)
+    DEALLOCATE(eps12_left, STAT=ALLOC_ERR)
+    DEALLOCATE(eps21_left, STAT=ALLOC_ERR)
+    DEALLOCATE(eps22_left, STAT=ALLOC_ERR)
+
+    DEALLOCATE(eps11_down, STAT=ALLOC_ERR)
+    DEALLOCATE(eps12_down, STAT=ALLOC_ERR)
+    DEALLOCATE(eps21_down, STAT=ALLOC_ERR)
+    DEALLOCATE(eps22_down, STAT=ALLOC_ERR)
 
 ! call MatSetValues(Amat, one, ix, ny, jcol, v, INSERT_VALUES,ierr) 
 ! inserts or adds a block of values into a matrix
@@ -1306,40 +1697,44 @@ contains
 !       call  PetscViewerDestroy(viewer,ierr)        
 !    end if
     
+    IF (.not.MatVecsCreated) THEN
 ! Create solver [S.J.]
 
 ! KSP is abstract petsc object that manages all Krylov methods. 
-! It manages the linear solves (even when krylov accelerators are not used like in direct solvers
+! It manages the linear solves (even when krylov accelerators are not used like in direct solvers)
 
 ! Creates the default KSP context
 ! here ksp is location where to put KSP context
-    call KSPCreate(parComm, ksp, ierr)
+       call KSPCreate(parComm, ksp, ierr)
 
 ! Sets the matrix associated with the linear system and a (possibly) different one associated with the preconditioner
 ! argument #3 is the matrix to be used in constructing the preconditioner, 
 ! usually the same as argument #2 (the matrix that defines the linear system)
-    call KSPSetOperators(ksp, Amat, Amat, ierr)
+       call KSPSetOperators(ksp, Amat, Amat, ierr)
 
 ! . . Set method (this set-up uses the LU-decomposition as the solver) [S.J.]
 
-! returns a pointer ot the preconditioner context set with KSPSetPc
-    call KSPGetPc(ksp, pc, ierr)
+! returns a pointer to the preconditioner context set with KSPSetPc
+       call KSPGetPc(ksp, pc, ierr)
 
 ! sets the preconditioner to be used to calculate the application of the preconditioner on a vector
-    call KSPSetUp(ksp, ierr)
+       call KSPSetUp(ksp, ierr)
 
 ! Create B and X vectors [S.J.]
 
 ! note that ### bvec ### is the vector of the right hand side and ### xvec ### is the solution vector
 
 ! get vector(s) compatible with the matrix, i.e. with the same parallel layout
-    call MatCreateVecs(Amat, PETSC_NULL_VEC, bvec, ierr)
+       call MatCreateVecs(Amat, PETSC_NULL_VEC, bvec, ierr)
 
 ! configures the vector from the options database
-    call VecSetFromOptions(bvec, ierr)
+       call VecSetFromOptions(bvec, ierr)
 
 ! creates a new vector of the same type as an existing vector
-    call VecDuplicate(bvec, xvec, ierr)
+       call VecDuplicate(bvec, xvec, ierr)
+    ELSE
+       CALL KSPSetInitialGuessNonzero(ksp,PETSC_TRUE,ierr)        
+    END IF        
     
     ! Done with setting up vectors and matrices!
     return
@@ -1366,7 +1761,7 @@ contains
     
     if(.not.allocated(jvec)) then
 
-       allocate(jvec(nnodes))
+       allocate(jvec(1 : nnodes))
 
 ! calculation of jvec modified by DS
 
@@ -1414,7 +1809,6 @@ contains
 !!    call PetscViewerSetType(viewer,PETSCVIEWERMATLAB,ierr)
 !    call VecView(bvec,viewer,ierr)
 !    call PetscViewerDestroy(parComm,viewer,ierr)
-
     return
   end subroutine InsertData
 
@@ -1432,7 +1826,7 @@ contains
     PetscErrorCode :: ierr
     
     if(.not.allocated(jvec)) then
-       allocate(jvec(nnodes))
+       allocate(jvec(1 : nnodes))
 
 ! calculation of jvec modified by DS
 
@@ -1475,8 +1869,10 @@ contains
   
   subroutine SolverDestroy
     PetscErrorCode :: ierr
-    call KSPDestroy(ksp,ierr)
+    call VecDestroy(xvec, ierr)
+    call VecDestroy(bvec, ierr)
     call MatDestroy(Amat,ierr)
+    call KSPDestroy(ksp,ierr)
     return
   end subroutine SolverDestroy
   
@@ -1721,9 +2117,10 @@ END FUNCTION Get_Surface_Charge_Inner_Object
 
 !-----------------------------------------------
 !
-SUBROUTINE SET_EPS_ISHIFTED(i, j, eps)  ! here point {i,j} is between nodes {i-1,j} and {i,j}
+SUBROUTINE SET_EPS_ISHIFTED(i, j, eps_xx, eps_xy, eps_yx, eps_yy)  ! here point {i,j} is between nodes {i-1,j} and {i,j}
 
   USE CurrentProblemValues
+  USE IonParticles, ONLY : N_spec
 
   IMPLICIT NONE
 
@@ -1732,18 +2129,32 @@ SUBROUTINE SET_EPS_ISHIFTED(i, j, eps)  ! here point {i,j} is between nodes {i-1
   INTEGER ierr
  
   INTEGER, INTENT(IN) :: i, j
-  REAL(8), INTENT(OUT) :: eps
+  REAL(8), INTENT(OUT) :: eps_xx, eps_xy, eps_yx, eps_yy
+  REAL(8) eps
+  REAL, ALLOCATABLE :: polariz(:)
+  INTEGER ALLOC_ERR
+  INTEGER s
 
   INTEGER count  ! counts dielectric objects
   LOGICAL segment_is_inside_dielectric_object
   LOGICAL segment_is_on_surface_of_metal_object
   INTEGER n1
 
+  ALLOCATE(polariz(0:N_spec), STAT=ALLOC_ERR)
+  polariz(0) = Chi_left(i, j) ! defined at all nodes in range (ibegin:iend+1, jbegin:jend)
+  DO s = 1, N_spec
+     polariz(s) = 0.5_8 * (Chi_i(s, i-1, j) + Chi_i(s, i, j))
+  END DO
+  eps = 0.0_8 !accumulates any isotropic part contributed by dielectric
+  eps_xx = 1.0_8
+  eps_xy = 0.0_8
+  eps_yx = 0.0_8
+  eps_yy = 1.0_8
+
 ! find all inner objects owning segment {i-1,j}-{i,j}
 ! assume that only two dielectric objects may own a common segment
 ! allow a metal object to be added on top of that
 
-  eps = 0.0_8
   count = 0
   segment_is_inside_dielectric_object = .FALSE.
 
@@ -1781,8 +2192,10 @@ SUBROUTINE SET_EPS_ISHIFTED(i, j, eps)  ! here point {i,j} is between nodes {i-1
 ! segment is inside
         segment_is_inside_dielectric_object = .TRUE.
         eps = whole_object(n1)%eps_diel
+        eps_xx = eps
+        eps_yy = eps
         count = 1
-        EXIT
+        EXIT !exit the loop over dielectric objects
 
      END IF   !### IF ((j.EQ.whole_object(n1)%jtop).OR.(j.EQ.whole_object(n1)%jbottom)) THEN
 
@@ -1832,7 +2245,9 @@ SUBROUTINE SET_EPS_ISHIFTED(i, j, eps)  ! here point {i,j} is between nodes {i-1
 ! #3
 ! another metal object already has this segment on its border, so the segment is between two metal objects
 ! return zero epsilon
-           eps = 0.0_8
+           eps = 0.0_8 ! all components are zero 
+           eps_xx = 0.0_8
+           eps_yy = 0.0_8
            RETURN
         END IF
 ! remember that a metal object was found
@@ -1841,7 +2256,9 @@ SUBROUTINE SET_EPS_ISHIFTED(i, j, eps)  ! here point {i,j} is between nodes {i-1
      ELSE   !### IF ((j.EQ.whole_object(n1)%jtop).OR.(j.EQ.whole_object(n1)%jbottom)) THEN
 ! segment is inside
 
-        eps = 0.0_8
+        eps = 0.0_8 ! all components are zero
+        eps_xx = 0.0_8
+        eps_yy = 0.0_8
         RETURN
 
      END IF   !### IF ((j.EQ.whole_object(n1)%jtop).OR.(j.EQ.whole_object(n1)%jbottom)) THEN
@@ -1854,39 +2271,76 @@ SUBROUTINE SET_EPS_ISHIFTED(i, j, eps)  ! here point {i,j} is between nodes {i-1
      IF (count.EQ.0) THEN
 ! segment on metal surface facing vacuum
         eps = 1.0_8
+        eps_xx = eps
+        eps_yy = eps
      ELSE
 ! segment on metal surface facing dielectric
-        eps = eps / count
+        eps = eps / DBLE(count)
+        eps_xx = eps
+        eps_yy = eps
      END IF
      RETURN
   END IF
 
   IF (count.EQ.0) THEN
-! segment is in vacuum
+! segment is in vacuum or plasma
      eps = 1.0_8
+!     eps = 1.0_8 + Chi_left(i, j)
+     eps_xx = eps
+     eps_yy = eps
+     eps_xy = 0.0_8
+     eps_yx = 0.0_8
+     DO s = 0, N_spec
+        eps_xx = eps_xx + A11_left(s, i, j) * polariz(s)
+        eps_xy = eps_xy + A12_left(s, i, j) * polariz(s)
+        eps_yx = eps_yx + A21_left(s, i, j) * polariz(s)
+        eps_yy = eps_yy + A22_left(s, i, j) * polariz(s)
+     END DO
      RETURN
   ELSE IF (count.EQ.1) THEN
 ! segment is inside a dielectric object
-     IF (segment_is_inside_dielectric_object) RETURN
+     IF (segment_is_inside_dielectric_object) THEN
+        eps_xx = eps
+        eps_yy = eps
+     RETURN
+  END IF   
 ! segment is on the surface of a dielectric object, facing vacuum
-     eps = (1.0_8 + eps) / 2.0_8
+!     eps = (1.0_8 + eps) / 2.0_8
+!     eps = (1.0_8 + Chi_left(i, j) + eps) / 2.0_8
+     eps_xx = (eps + 1.0_8) / 2.0_8
+     eps_yy = (eps + 1.0_8) / 2.0_8
+     eps_xy = 0.0_8
+     eps_yx = 0.0_8
+     DO s = 0, N_spec
+        eps_xx = eps_xx + A11_left(s, i, j) * polariz(s) / 2.0_8
+        eps_xy = eps_xy + A12_left(s, i, j) * polariz(s) / 2.0_8
+        eps_yx = eps_yx + A21_left(s, i, j) * polariz(s) / 2.0_8
+        eps_yy = eps_yy + A22_left(s, i, j) * polariz(s) / 2.0_8
+     END DO
      RETURN
   ELSE IF (count.EQ.2) THEN
      eps = eps / DBLE(count)
+     eps_xx = eps
+     eps_yy = eps
      RETURN
   ELSE
      PRINT '("Error-3 in SET_EPS_ISHIFTED for i/j ",2x,i4,2x,i4)', i, j
      CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
   END IF
 
+  IF (ALLOCATED(polariz)) THEN
+     DEALLOCATE (polariz, STAT=ALLOC_ERR)
+  END IF  
+
 END SUBROUTINE SET_EPS_ISHIFTED
 
 
 !-----------------------------------------------
 !
-SUBROUTINE SET_EPS_JSHIFTED(i, j, eps)  ! here point {i,j} is between nodes {i,j-1} and {i,j}
+SUBROUTINE SET_EPS_JSHIFTED(i, j, eps_xx, eps_xy, eps_yx, eps_yy)  ! here point {i,j} is between nodes {i,j-1} and {i,j}
 
   USE CurrentProblemValues
+  USE IonParticles, ONLY : N_spec
 
   IMPLICIT NONE
 
@@ -1895,18 +2349,32 @@ SUBROUTINE SET_EPS_JSHIFTED(i, j, eps)  ! here point {i,j} is between nodes {i,j
   INTEGER ierr
  
   INTEGER, INTENT(IN) :: i, j
-  REAL(8), INTENT(OUT) :: eps
-
+  REAL(8), INTENT(OUT) :: eps_xx, eps_xy, eps_yx, eps_yy
+  REAL(8)  eps
+  REAL, ALLOCATABLE :: polariz(:)
+  INTEGER s
+  INTEGER ALLOC_ERR
   INTEGER count  ! counts dielectric objects
   LOGICAL segment_is_inside_dielectric_object
   LOGICAL segment_is_on_surface_of_metal_object
   INTEGER n1
 
+  ALLOCATE(polariz(0:N_spec), STAT=ALLOC_ERR)
+  polariz(0) = Chi_down(i, j) ! defined at all nodes in range (ibegin:iend+1, jbegin:jend)
+  DO s = 1, N_spec
+     polariz(s) = 0.5_8 * (Chi_i(s, i, j-1) + Chi_i(s, i, j))
+  END DO
+
+  eps = 0.0_8
+  eps_xx = 1.0_8
+  eps_xy = 0.0_8
+  eps_yy = 1.0_8
+  eps_yx = 0.0_8
+
 ! find all inner objects owning segment {i,j-1}-{i,j}
 ! assume that only two dielectric objects may own a common segment
 ! allow a metal object to be added on top of that
 
-  eps = 0.0_8
   count = 0
   segment_is_inside_dielectric_object = .FALSE.
 
@@ -1944,8 +2412,10 @@ SUBROUTINE SET_EPS_JSHIFTED(i, j, eps)  ! here point {i,j} is between nodes {i,j
 ! segment is inside
         segment_is_inside_dielectric_object = .TRUE.
         eps = whole_object(n1)%eps_diel
+        eps_xx = eps
+        eps_yy = eps
         count = 1
-        EXIT
+        EXIT !exit the cycle
 
      END IF   !### ((i.EQ.whole_object(n1)%ileft).OR.(i.EQ.whole_object(n1)%iright)) THEN
 
@@ -1995,7 +2465,9 @@ SUBROUTINE SET_EPS_JSHIFTED(i, j, eps)  ! here point {i,j} is between nodes {i,j
 ! #3
 ! another metal object already has this segment on its border, so the segment is between two metal objects
 ! return zero epsilon
-           eps = 0.0_8
+           eps = 0.0_8 ! all components are zero
+           eps_xx = 0.0_8
+           eps_yy = 0.0_8
            RETURN
         END IF
 ! remember that a metal object was found
@@ -2004,7 +2476,9 @@ SUBROUTINE SET_EPS_JSHIFTED(i, j, eps)  ! here point {i,j} is between nodes {i,j
      ELSE   !### IF ((j.EQ.whole_object(n1)%jtop).OR.(j.EQ.whole_object(n1)%jbottom)) THEN
 ! segment is inside
 
-        eps = 0.0_8
+        eps = 0.0_8 ! all components are zero
+        eps_xx = 0.0_8
+        eps_yy = 0.0_8
         RETURN
 
      END IF   !### IF ((j.EQ.whole_object(n1)%jtop).OR.(j.EQ.whole_object(n1)%jbottom)) THEN
@@ -2017,170 +2491,65 @@ SUBROUTINE SET_EPS_JSHIFTED(i, j, eps)  ! here point {i,j} is between nodes {i,j
      IF (count.EQ.0) THEN
 ! segment on metal surface facing vacuum
         eps = 1.0_8
+        eps_xx = eps
+        eps_yy = eps
      ELSE
 ! segment on metal surface facing dielectric
-        eps = eps / count
+        eps = eps / DBLE(count)
+        eps_xx = eps
+        eps_yy = eps
      END IF
      RETURN
   END IF
 
   IF (count.EQ.0) THEN
-! segment is in vacuum
+! segment is in vacuum or plasma
      eps = 1.0_8
+!     eps = 1.0_8 + Chi_down(i, j)
+     eps_xx = eps
+     eps_yy = eps
+     eps_xy = 0.0_8
+     eps_yx = 0.0_8
+     DO s = 0, N_spec
+        eps_xx = eps_xx + A11_down(s, i, j) * polariz(s)
+        eps_xy = eps_xy + A12_down(s, i, j) * polariz(s)
+        eps_yx = eps_yx + A21_down(s, i, j) * polariz(s)
+        eps_yy = eps_yy + A22_down(s, i, j) * polariz(s)
+     END DO
      RETURN
   ELSE IF (count.EQ.1) THEN
 ! segment is inside a dielectric object
-     IF (segment_is_inside_dielectric_object) RETURN
+     IF (segment_is_inside_dielectric_object) THEN 
+        eps_xx = eps
+        eps_yy = eps
+     RETURN
+  END IF
 ! segment is on the surface of a dielectric object, facing vacuum
-     eps = (1.0_8 + eps) / 2.0_8
+!     eps = (1.0_8 + eps) / 2.0_8
+!     eps = (1.0_8 + Chi_down(i, j) + eps) / 2.0_8
+     eps_xx = (eps + 1.0_8) / 2.0_8
+     eps_yy = (eps + 1.0_8) / 2.0_8
+     eps_xy = 0.0_8
+     eps_yx = 0.0_8
+     DO s = 0, N_spec
+        eps_xx = eps_xx + A11_down(s, i, j) * polariz(s) / 2.0_8
+        eps_xy = eps_xy + A12_down(s, i, j) * polariz(s) / 2.0_8
+        eps_yx = eps_yx + A21_down(s, i, j) * polariz(s) / 2.0_8
+        eps_yy = eps_yy + A22_down(s, i, j) * polariz(s) / 2.0_8
+     END DO
      RETURN
   ELSE IF (count.EQ.2) THEN
      eps = eps / DBLE(count)
+     eps_xx = eps
+     eps_yy = eps
      RETURN
   ELSE
      PRINT '("Error-3 in SET_EPS_JSHIFTED for i/j ",2x,i4,2x,i4)', i, j
      CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
   END IF
 
+  IF (ALLOCATED(polariz)) THEN
+     DEALLOCATE (polariz, STAT=ALLOC_ERR)
+  END IF  
+
 END SUBROUTINE SET_EPS_JSHIFTED
-
-!-----------------------------------------------
-! this is a simplified verions
-! it is expected that point x is INSIDE some inner object or OUTSIDE, but not at the border of the object
-!
-SUBROUTINE GET_EPS_IN_POINT(x, y, eps)
-
-  USE CurrentProblemValues
-
-  IMPLICIT NONE
-
-  INCLUDE 'mpif.h'
-
-  INTEGER ierr
- 
-  REAL(8), INTENT(IN) :: x, y
-  REAL(8), INTENT(OUT) :: eps
-
-  INTEGER count  ! counts dielectric objects
-  LOGICAL point_is_inside_dielectric_object
-  LOGICAL point_is_on_surface_of_metal_object
-  INTEGER n1
-
-! find all inner objects owning segment {i,j-1}-{i,j}
-! assume that only two dielectric objects may own a common segment
-! allow a metal object to be added on top of that
-
-  eps = 0.0_8
-  count = 0
-  point_is_inside_dielectric_object = .FALSE.
-
-! first, look through the dielectric objects only
-  DO n1 = N_of_boundary_objects+1, N_of_boundary_and_inner_objects
-
-     IF (whole_object(n1)%object_type.EQ.METAL_WALL) CYCLE
-
-! find an inner object containing point x, y
-
-     IF (x.LT.whole_object(n1)%Xmin) CYCLE
-     IF (x.GT.whole_object(n1)%Xmax) CYCLE
-     IF (y.LT.whole_object(n1)%Ymin) CYCLE
-     IF (y.GT.whole_object(n1)%Ymax) CYCLE
-
-! since we are here, point x,y is either at the surface or inside inner object n1
-
-     count = count + 1
-     eps = eps + whole_object(n1)%eps_diel
-
-     IF ( (x.GT.whole_object(n1)%Xmin).AND. &
-        & (x.LT.whole_object(n1)%Xmax).AND. &
-        & (y.GT.whole_object(n1)%Ymin).AND. &
-        & (y.LT.whole_object(n1)%Ymax) ) THEN
-! point inside
-        point_is_inside_dielectric_object = .TRUE.
-        EXIT
-     END IF
-
-  END DO   !###  DO n1 = N_of_boundary_objects+1, N_of_boundary_and_inner_objects
-
-! at this point
-! if count==0 then the point is either in/on metal object or in vacuum
-! if count==1 then the point is either inside a dielectric object or on the surface of ONE (not two) dielectric object
-! if count==2,3,4 then the point is at the interface between 2,3,4 dielectrics
-! if count>=5 this is an error
-
-! second, look through the metal objects only
-! if point belongs to a metal object 
-! return zero if it is inside
-! if it is on the surface
-! return (#1) epsilon of adjacent dielectric object or (#2) 1 if the metal object is in vacuum or (#3) 0 if the metal object is attached to another metal object
-
-  point_is_on_surface_of_metal_object = .FALSE.
-
-  DO n1 = N_of_boundary_objects+1, N_of_boundary_and_inner_objects
-
-     IF (whole_object(n1)%object_type.NE.METAL_WALL) CYCLE
-
-! find an inner object containing point x, y
-
-     IF (x.LT.whole_object(n1)%Xmin) CYCLE
-     IF (x.GT.whole_object(n1)%Xmax) CYCLE
-     IF (y.LT.whole_object(n1)%Ymin) CYCLE
-     IF (y.GT.whole_object(n1)%Ymax) CYCLE
-
-! since we are here, point x,y is either at the surface or inside inner object n1
-
-     IF ( (x.EQ.whole_object(n1)%Xmin).OR. &
-        & (x.EQ.whole_object(n1)%Xmax).OR. &
-        & (y.EQ.whole_object(n1)%Ymin).OR. &
-        & (y.EQ.whole_object(n1)%Ymax) ) THEN
-! point is on the surface
-        IF (point_is_on_surface_of_metal_object) THEN
-! #3
-! another metal object already has this segment on its border, so the segment is between two metal objects
-! return zero epsilon
-           eps = 0.0_8
-           RETURN
-        END IF
-! remember that a metal object was found
-        point_is_on_surface_of_metal_object = .TRUE.
-     ELSE
-! point is inside
-        eps = 0.0_8
-        RETURN
-     END IF
-
-  END DO   !###  DO n1 = N_of_boundary_objects+1, N_of_boundary_and_inner_objects
-
-! note that cases when segment is inside a metal object or in between two attached metal objects are already processed above, followed by RETURN calls
-
-  IF (point_is_on_surface_of_metal_object) THEN
-     IF (count.EQ.0) THEN
-! point on metal surface facing vacuum
-        eps = 1.0_8
-     ELSE
-! point on metal surface facing dielectric
-        eps = eps / count
-     END IF
-     RETURN
-  END IF
-
-  IF (count.EQ.0) THEN
-! point is in vacuum
-     eps = 1.0_8
-     RETURN
-  ELSE IF (count.EQ.1) THEN
-! point is inside a dielectric object
-     IF (point_is_inside_dielectric_object) RETURN
-! segment is on the surface of a dielectric object, facing vacuum
-     eps = (1.0_8 + eps) / 2.0_8
-     RETURN
-  ELSE IF (count.LT.4) THEN
-     eps = eps / DBLE(count)
-     RETURN
-  ELSE
-     PRINT '("Error-3 in GET_EPS_IN_POINT for x/y ",2x,f11.3,2x,f11.3)', x, y
-     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
-  END IF
-
-END SUBROUTINE GET_EPS_IN_POINT
-

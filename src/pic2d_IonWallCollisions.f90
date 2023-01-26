@@ -388,7 +388,7 @@ END SUBROUTINE COLLECT_PARTICLE_BOUNDARY_HITS
 
 !-----------------------------------------
 !
-SUBROUTINE TRY_ION_COLL_WITH_INNER_OBJECT(s, x, y, vx, vy, vz, tag)
+SUBROUTINE TRY_ION_COLL_WITH_INNER_OBJECT(s, x, y, vx, vy, vz, x_move, y_move, tag)
 
   USE ParallelOperationValues
   USE ClusterAndItsBoundaries
@@ -403,7 +403,7 @@ SUBROUTINE TRY_ION_COLL_WITH_INNER_OBJECT(s, x, y, vx, vy, vz, tag)
 
 !  INTEGER nio  ! number of the inner object
   INTEGER s
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, x_move, y_move
   INTEGER tag
 !  TYPE(boundary_object) myobject
 
@@ -422,8 +422,10 @@ SUBROUTINE TRY_ION_COLL_WITH_INNER_OBJECT(s, x, y, vx, vy, vz, tag)
 
   REAL coll_coord   ! coordinate of collision point, y/x for collisions with vertical/horizontal segments, respectively
 
-  xorg = x - vx*N_subcycles
-  yorg = y - vy*N_subcycles
+!  xorg = x - vx*N_subcycles
+!  yorg = y - vy*N_subcycles
+   xorg = x - x_move
+   yorg = y - y_move
 
   n_do = -1
   mcross = -1

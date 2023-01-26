@@ -70,19 +70,13 @@ SUBROUTINE PREPARE_EXTERNAL_FIELDS
      CLOSE (9, STATUS = 'KEEP')
 
 !B_ext = 1.0d-4 * 100.0_8 / B_scale_T !################  100 Gauss = 0.01 Tesla
-     Bx_ext = Bx_ext * 1.0d-4 / B_scale_T  
-     By_ext = By_ext * 1.0d-4 / B_scale_T  
-!###  Bz_ext = Bz_ext * 1.0d-4 / B_scale_T
+     Bx_ext = (Bx_ext * 1.0d-4) / B_scale_T  
+     By_ext = (By_ext * 1.0d-4) / B_scale_T  
+!###  Bz_ext = (Bz_ext * 1.0d-4) / B_scale_T
 
-     Bz_0    = Bz_0    * 1.0d-4 / B_scale_T
-
-     Bz_max  = Bz_max  * 1.0d-4 / B_scale_T
-!### warning ###, nonuniform Bz profile is disabled, to set thte constant external Bz use Bz_max
-!### the way how the external fields are specified needs to be revised to make it more universal 
-     Bz_ext = Bz_max   !###
-     IF (Rank_of_process.EQ.0) PRINT '("### Uniform Bz = ",e12.5," (Gauss) is assumed, set via BZ at y_Bmax in init_extfields.dat ###")', Bz_ext * B_scale_T * 1.0d4
-
-     Bz_Lsys = Bz_Lsys * 1.0d-4 / B_scale_T
+     Bz_0    = (Bz_0    * 1.0d-4) / B_scale_T
+     Bz_max  = (Bz_max  * 1.0d-4) / B_scale_T
+     Bz_Lsys = (Bz_Lsys * 1.0d-4) / B_scale_T
      y_Bmax = y_Bmax * 0.01_8 / delta_x_m
 
      half_over_sigma2_1 = 0.5_8 * (delta_x_m * 100.0_8 / half_over_sigma2_1)**2
@@ -96,7 +90,6 @@ SUBROUTINE PREPARE_EXTERNAL_FIELDS
 
      b1 = Bz_max - a1
      b2 = Bz_max - a2
-
 
      IF (Rank_of_process.EQ.0) THEN
         OPEN (10, FILE = 'external_Bz_vs_y.dat')
@@ -240,16 +233,16 @@ REAL(8) FUNCTION Bz(x, y)
   REAL(8) x, y
   REAL(8) h
 
-  Bz = Bz_ext
+  Bz = 0.0_8
+!  Bz = Bz_ext
 
-!### new - the nonuniform magnetic field profile is disabled for now, constant Bz assumed
-!### 
-!###  h = y - y_Bmax
-!###  IF (h.LT.0.0_8) THEN
-!###     Bz = a1 * EXP(-half_over_sigma2_1 * h * h) + b1
-!###  ELSE
-!###     Bz = a2 * EXP(-half_over_sigma2_2 * h * h) + b2
-!###  END IF
+!  h = y - y_Bmax
+
+!  IF (h.LT.0.0_8) THEN
+!     Bz = a1 * EXP(-half_over_sigma2_1 * h * h) + b1
+!  ELSE
+!     Bz = a2 * EXP(-half_over_sigma2_2 * h * h) + b2
+!  END IF
 
 END FUNCTION Bz
 
@@ -266,3 +259,75 @@ REAL(8) FUNCTION Ez(x, y)
   Ez = Ez_ext
 
 END FUNCTION Ez
+
+  SUBROUTINE SET_A_inverse_AT_HALFNODES
+! called by each process, called to set the dielectric tensor to be used in the solver
+! the matrices are 2 by 2
+    USE ParallelOperationValues
+    USE ExternalFields
+    USE CurrentProblemValues
+    USE BlockAndItsBoundaries
+    USE IonParticles, ONLY : N_spec, QM2s
+    
+    implicit none
+
+    INCLUDE 'mpif.h'
+
+    REAL(8) theta_x, theta_y, theta_z, theta2, c2, symm, anti
+    REAL(8) x, y
+    INTEGER i, j, s, smax
+    
+    REAL(8) Bx, By, Bz
+    REAL(8) QMhalf, factor
+! it is implied that B-components are defined for any values of the function argument (x, y).
+
+ smax = N_spec
+! IF(.NOT.(ion_sense_magnetic_field)) smax = 0
+ DO s = 0, smax
+    IF (s.EQ.0) THEN
+       QMhalf = -0.5_8
+       factor =  1.0_8
+    ELSE
+       QMhalf = QM2s(s)
+       factor = N_subcycles
+    END IF       
+
+    DO j = indx_y_min, indx_y_max
+       DO i = indx_x_min, indx_x_max + 1
+          x = dble(i) - 0.5_8
+          y = dble(j)
+          theta_x = factor * QMhalf * Bx(x,y) * delta_t_factor !minus sign for electrons
+          theta_y = factor * QMhalf * By(x,y) * delta_t_factor
+          theta_z = factor * QMhalf * Bz(x,y) * delta_t_factor
+          theta2 = theta_x**2 + theta_y**2 + theta_z**2
+          c2 = 1.0_8 / (1.0_8 + theta2) 
+          symm = theta_x * theta_y
+          anti = theta_z
+          A11_left(s,i,j) = c2 * (1.0_8 + theta_x**2)
+          A12_left(s,i,j) = c2 * (symm + anti)
+          A21_left(s,i,j) = c2 * (symm - anti)
+          A22_left(s,i,j) = c2 * (1.0_8 + theta_y **2)
+       END DO
+    END DO 
+
+    DO j = indx_y_min, indx_y_max + 1
+       DO i = indx_x_min, indx_x_max
+          x = dble(i) 
+          y = dble(j) - 0.5_8
+          theta_x = factor * QMhalf * Bx(x,y) * delta_t_factor !minus sign for electrons
+          theta_y = factor * QMhalf * By(x,y) * delta_t_factor
+          theta_z = factor * QMhalf * Bz(x,y) * delta_t_factor
+          theta2 = theta_x**2 + theta_y**2 + theta_z**2
+          c2 = 1.0_8 / (1.0_8 + theta2)
+          symm = theta_x * theta_y
+          anti = theta_z
+          A11_down(s,i,j) = c2 * (1.0_8 + theta_x**2)
+          A12_down(s,i,j) = c2 * (symm + anti)
+          A21_down(s,i,j) = c2 * (symm - anti)
+          A22_down(s,i,j) = c2 * (1.0_8 + theta_y **2)
+       END DO
+    END DO
+ END DO !species cycle
+!  write(*,*) Rank_of_process, "A_inverse allocated"  
+  END SUBROUTINE SET_A_inverse_AT_HALFNODES  
+

@@ -25,7 +25,7 @@ subroutine calculate_thermal_cx_probab
      ngas_m3 = neutral(n)%N_m3
      sigma_m2_therm = sigma_rcx_m2(1.5_8 * Tgas_eV, sigma_m2_1eV, alpha)
      Vmean_ms = sqrt(2.54647908947033_8 * Tgas_eV * e_Cl / (Ms(s) * m_e_kg))   ! 2.5464... = 8/pi, note that Ms(s) is (amu_kg * M_i_amu(s)) / m_e_kg
-     collision_rcx(s)%probab_thermal = ngas_m3 * sigma_m2_therm * Vmean_ms * delta_t_s * N_subcycles
+     collision_rcx(s)%probab_thermal = ngas_m3 * sigma_m2_therm * Vmean_ms * delta_t_s * N_subcycles 
   END DO
 
 end subroutine calculate_thermal_cx_probab
@@ -51,7 +51,7 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
 
   USE MCCollisions
   USE IonParticles
-  USE CurrentProblemValues, ONLY : energy_factor_eV, delta_t_s, N_subcycles, V_scale_ms
+  USE CurrentProblemValues, ONLY : energy_factor_eV, delta_t_s, N_subcycles, V_scale_ms 
   USE rng_wrapper
 
   IMPLICIT NONE
@@ -64,7 +64,7 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
   real(8) ngas_m3, sigma_m2_1eV, alpha, probab_rcx_therm_2
   real(8) factor_eV, vfactor, prob_factor
 
-  real(8) vx, vy, vz, vsq, energy_eV, vabs_ms
+  real(8) vx, vy, vz, vsq, energy_eV, vabs_ms, VX_n, VY_n, VZ_n
   real(8) probab_rcx
   real(8) Ux, Uy, Uz 
 
@@ -95,31 +95,42 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
 
      factor_eV = Ms(s) * energy_factor_eV         ! instead of collision_rcx(s)%factor_eV
      vfactor = collision_rcx(s)%vfactor           ! to convert Maxwellian sample
-     prob_factor = ngas_m3 * delta_t_s * N_subcycles
+     prob_factor = ngas_m3 * delta_t_s * N_subcycles 
 
      DO i = 1, N_ions(s)
 
 !        if (well_random_number().GT.neutral_density_normalized(n, ion(s)%part(i)%x, ion(s)%part(i)%y)) cycle   ! for uniform density profile this is not necessary
 
+! sample a neutral before testing for collision:
+        call GetMaxwellVelocity(VX_n)
+        call GetMaxwellVelocity(VY_n)
+        call GetMaxwellVelocity(VZ_n)
+        !VX_n = VX_n * vfactor
+        !VY_n = VY_n * vfactor
+        !VZ_n = VZ_n * vfactor
+! relative velocity:
         vx = ion(s)%part(i)%VX
         vy = ion(s)%part(i)%VY
         vz = ion(s)%part(i)%VZ
-        vsq = (vx - (Ux * vfactor))**2 + (vy - (Uy * vfactor))**2 + (vz - (Uz * vfactor))**2
+        vsq = (vx - ((Ux + VX_n) * vfactor))**2 + (vy - ((Uy + VY_n) * vfactor))**2 + (vz - ((Uz + VZ_n) * vfactor))**2
+
         energy_eV = vsq * factor_eV
         vabs_ms = sqrt(vsq) * V_scale_ms 
 
 !        probab_rcx = ngas_m3 * vabs_ms * sigma_rcx_m2(energy_eV, sigma_m2_1eV, alpha) * delta_t_s * N_subcycles
         probab_rcx = prob_factor * vabs_ms * sigma_rcx_m2(energy_eV, sigma_m2_1eV, alpha)
-
-        probab_rcx = neutral_density_normalized(n, ion(s)%part(i)%x, ion(s)%part(i)%y) * sqrt(probab_rcx**2 + probab_rcx_therm_2)  ! account for the nonuniform density and the low-energy correction
+!        probab_rcx = neutral_density_normalized(n, ion(s)%part(i)%x, ion(s)%part(i)%y) * sqrt(probab_rcx**2 + probab_rcx_therm_2)  ! account for the nonuniform density and the low-energy correction
+        probab_rcx = neutral_density_normalized(n, ion(s)%part(i)%x, ion(s)%part(i)%y) * probab_rcx
 
         if (well_random_number().le.probab_rcx) then
-           call GetMaxwellVelocity(VX)
-           call GetMaxwellVelocity(VY)
-           call GetMaxwellVelocity(VZ)
-           ion(s)%part(i)%VX = (VX + Ux) * vfactor ! After ion - neu collision, resample ion velocity from Maxwellian drifting at netraul bulk velocity U and neutral temperature
-           ion(s)%part(i)%VY = (VY + Uy) * vfactor
-           ion(s)%part(i)%VZ = (VZ + Uz) * vfactor
+
+           ion(s)%part(i)%VX = (VX_n + Ux) * vfactor ! After ion - neu collision, resample ion velocity from Maxwellian drifting at netraul bulk velocity U and neutral temperature
+           ion(s)%part(i)%VY = (VY_n + Uy) * vfactor
+           ion(s)%part(i)%VZ = (VZ_n + Uz) * vfactor
+
+           ion(s)%part(i)%AX = 0.0_8
+           ion(s)%part(i)%AY = 0.0_8
+
 !           ion(s)%part(k)%tag = CXtag
            collision_rcx(s)%counter = collision_rcx(s)%counter + 1
 !        else

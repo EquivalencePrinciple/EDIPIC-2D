@@ -1,4 +1,5 @@
-
+! updated with choosing the post-collision angles a la Boeuf. Alex 08/08/22
+! corrected an error: incoming velocity was not re-scaled for loss of energy before applying conservation of momentum 08/09/22
 !------------------------------------------------
 !
 REAL(8) FUNCTION frequency_of_en_collision(energy_eV, indx_neutral, colproc_id)
@@ -13,15 +14,24 @@ REAL(8) FUNCTION frequency_of_en_collision(energy_eV, indx_neutral, colproc_id)
   INTEGER, INTENT(IN) :: colproc_id
 
   INTEGER N_crsect_points
-  REAL(8) f_temp
+  REAL(8) f_temp, energy_max, aa, bb
   INTEGER j
   REAL(8) energy_j_eV, energy_jp1_eV, f_j, f_jp1
 
   N_crsect_points = neutral(indx_neutral)%en_colproc(colproc_id)%N_crsect_points
+  energy_max = neutral(indx_neutral)%en_colproc(colproc_id)%energy_eV(N_crsect_points)
 
-  IF (energy_eV.GE.neutral(indx_neutral)%en_colproc(colproc_id)%energy_eV(N_crsect_points)) THEN
-
+  IF (energy_eV.GE.energy_max) THEN
+     
+          bb = energy_eV / energy_max
      f_temp = neutral(indx_neutral)%en_colproc(colproc_id)%crsect_m2(N_crsect_points) * SQRT(2.0_8 * energy_eV * e_Cl / m_e_kg)
+     IF (neutral(indx_neutral)%en_colproc(colproc_id)%type.LT.20) THEN !extrapolate for elastic collisions
+        aa = (1.0_8 + log(bb)) / bb
+     ELSE
+        aa = 1.0_8 / bb !extrapolate for inelastic collisions
+     END IF
+     f_temp = f_temp * aa     
+!!     f_temp = neutral(indx_neutral)%en_colproc(colproc_id)%crsect_m2(N_crsect_points) * SQRT(2.0_8 * energy_eV * e_Cl / m_e_kg)
 
   ELSE IF (energy_eV.LT.neutral(indx_neutral)%en_colproc(colproc_id)%energy_eV(1)) THEN
 
@@ -428,8 +438,8 @@ SUBROUTINE en_Collision_Ionization_30(indx_neutral, indx_particle, energy_inc_eV
   REAL(8) energy_ej_eV     ! energy of ejected electron [eV] 
   REAL(8) Ksi_ej
   REAL(8) CosKsi_ej, SinKsi_ej     
-  REAL(8) Fi_ej
-  REAL(8) CosFi_ej, SinFi_ej     
+!  REAL(8) Fi_ej
+!  REAL(8) CosFi_ej, SinFi_ej     
 
   REAL(8) V, V_xy, a, b            
 
@@ -438,6 +448,7 @@ SUBROUTINE en_Collision_Ionization_30(indx_neutral, indx_particle, energy_inc_eV
   REAL(8) Vx_ej, Vy_ej, Vz_ej ! velocity components of ejected electron
   REAL(8) Vx_i, Vy_i, Vz_i    ! velocity components of produced ion
   REAL(8) Ux, Uy, Uz          ! directed velocity components of neutrals
+  REAL(8) ax, ay, az
 
   REAL(8) alpha            
 
@@ -505,10 +516,14 @@ SUBROUTINE en_Collision_Ionization_30(indx_neutral, indx_particle, energy_inc_eV
 ! Calculate the scattering angle Ksi for the incident electron ! [Vahedi]: use the modified energy "energy_sc_eV" here
   R = well_random_number()
 !####  CosKsi_sc = (2.0_8 + energy_sc_eV - 2.0_8 * (1.0_8 + energy_sc_eV)**R) / energy_sc_eV ####
-  CosKsi_sc = 1.0_8 - 2.0_8 * R / (1.0_8 + 8.0_8 * (energy_sc_eV / 27.21_8) * (1.0_8 - R))
+!  CosKsi_sc = 1.0_8 - 2.0_8 * R / (1.0_8 + 8.0_8 * (energy_sc_eV / 27.21_8) * (1.0_8 - R))
+
+  CosKsi_sc = SQRT(energy_sc_eV / (energy_inc_eV - threshold_energy_eV))
   CosKsi_sc = MAX(MIN(0.999999999999_8, CosKsi_sc), -0.999999999999_8)   !############ to avoid an unlikely situation when |CosKsi_sc|>1
   Ksi_sc    = ACOS(CosKsi_sc)
-  SinKsi_sc = SIN(Ksi_sc)
+!  SinKsi_sc = SIN(Ksi_sc)
+  SinKsi_sc = SQRT(energy_ej_eV / (energy_inc_eV - threshold_energy_eV))
+  SinKsi_sc = MAX(MIN(0.999999999999_8, SinKsi_sc), 0.0_8)
 
 ! Calculate the azimuthal scattering angle for the incident electron
   R = well_random_number()
@@ -517,18 +532,19 @@ SUBROUTINE en_Collision_Ionization_30(indx_neutral, indx_particle, energy_inc_eV
   SinFi_sc = SIN(Fi_sc)
 
 ! Calculate the scattering angle Ksi for the ejected electron
-  R = well_random_number()
+!  R = well_random_number()
 !####  CosKsi_ej = (2.0_8 + energy_ej_eV - 2.0_8 * (1.0_8 + energy_ej_eV)**R) / energy_ej_eV ####
-  CosKsi_ej = 1.0_8 - 2.0_8 * R / (1.0_8 + 8.0_8 * (energy_ej_eV / 27.21_8) * (1.0_8 - R))
-  CosKsi_ej = MAX(MIN(0.999999999999_8, CosKsi_ej), -0.999999999999_8)   !############ to avoid an unlikely situation when |CosKsi_ej|>1
-  Ksi_ej    = ACOS(CosKsi_ej)
-  SinKsi_ej = SIN(Ksi_ej)
+!  CosKsi_ej = 1.0_8 - 2.0_8 * R / (1.0_8 + 8.0_8 * (energy_ej_eV / 27.21_8) * (1.0_8 - R))
+!  CosKsi_ej = MAX(MIN(0.999999999999_8, CosKsi_ej), -0.999999999999_8)   !############ to avoid an unlikely situation when |CosKsi_ej|>1
+!  Ksi_ej    = ACOS(CosKsi_ej)
+!  SinKsi_ej = SIN(Ksi_ej)
+! V_ej will is calculated below based on conservation of momentum
 
 ! Calculate the azimuthal scattering angle for the ejected electron
-  R = well_random_number()
-  Fi_ej    = R * 6.28318530718_8
-  CosFi_ej = COS(Fi_ej)
-  SinFi_ej = SIN(Fi_ej)
+!  R = well_random_number()
+!  Fi_ej    = R * 6.28318530718_8
+!  CosFi_ej = COS(Fi_ej)
+!  SinFi_ej = SIN(Fi_ej)
 
 ! Take the velocity of the incident electron before the scattering
   Vx = electron(indx_particle)%VX !VX_of_spec(1)%part(num)
@@ -580,30 +596,39 @@ SUBROUTINE en_Collision_Ionization_30(indx_neutral, indx_particle, energy_inc_eV
 !     Vx_ej = Vx * CosKsi_ej + Vy * a + Vx * b
 !     Vy_ej = Vy * CosKsi_ej - Vx * a + Vy * b
 !     Vz_ej = Vz * CosKsi_ej          - V_xy * SinKsi_ej * CosFi_ej
-  IF (V_xy.GT.1.0d-20) THEN
-     a = Vx / V_xy
-     b = Vy / V_xy
-     Vx_ej = Vx * CosKsi_ej + (SinFi_ej * V * b + CosFi_ej * Vz * a) * SinKsi_ej
-     Vy_ej = Vy * CosKsi_ej - (SinFi_ej * V * a - CosFi_ej * Vz * b) * SinKsi_ej
-     Vz_ej = Vz * CosKsi_ej - V_xy * CosFi_ej * SinKsi_ej
-  ELSE
-     Vx_ej = ABS(Vz) * SinKsi_ej * CosFi_ej
-     Vy_ej = ABS(Vz) * SinKsi_ej * SinFi_ej
-     Vz_ej = Vz * CosKsi_ej
-  END IF
+!  IF (V_xy.GT.1.0d-20) THEN
+!     a = Vx / V_xy
+!     b = Vy / V_xy
+!     Vx_ej = Vx * CosKsi_ej + (SinFi_ej * V * b + CosFi_ej * Vz * a) * SinKsi_ej
+!     Vy_ej = Vy * CosKsi_ej - (SinFi_ej * V * a - CosFi_ej * Vz * b) * SinKsi_ej
+!     Vz_ej = Vz * CosKsi_ej - V_xy * CosFi_ej * SinKsi_ej
+!  ELSE
+!     Vx_ej = ABS(Vz) * SinKsi_ej * CosFi_ej
+!     Vy_ej = ABS(Vz) * SinKsi_ej * SinFi_ej
+!     Vz_ej = Vz * CosKsi_ej
+!  END IF
 
 !print *, Vx**2 + Vy**2 + Vz**2, Vx_ej**2 + Vy_ej**2 + Vz_ej**2   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 ! Calculate the relative energy drop 
-  alpha = SQRT(energy_ej_eV / energy_inc_eV)
+!  alpha = SQRT(energy_ej_eV / energy_inc_eV)
 ! Renormalize the velocity of EJECTED ELECTRON in order to account the energy drop
-  Vx_ej = Vx_ej * alpha
-  Vy_ej = Vy_ej * alpha
-  Vz_ej = Vz_ej * alpha
+!  Vx_ej = Vx_ej * alpha
+!  Vy_ej = Vy_ej * alpha
+!  Vz_ej = Vz_ej * alpha
+  alpha = SQRT(1.0_8 - threshold_energy_eV / energy_inc_eV)
+! apply conservation of momentum:
+  Vx_ej = alpha * Vx - Vx_sc
+  Vy_ej = alpha * Vy - Vy_sc
+  Vz_ej = alpha * Vz - Vz_sc
+
+  ax = 0.0_8
+  ay = 0.0_8
+  az = 0.0_8
 
 !print *, energy_inc_eV, ((Vx_sc**2+Vy_sc**2+Vz_sc**2)*T_e_eV/N_box_vel**2)/energy_sc_eV, ((Vx_ej**2+Vy_ej**2+Vz_ej**2)*T_e_eV/N_box_vel**2)/energy_ej_eV
 !print *, "en_Collision_Ionization_30 :: before ADD_ELECTRON_TO_ADD_LIST"
-  CALL ADD_ELECTRON_TO_ADD_LIST(electron(indx_particle)%X, electron(indx_particle)%Y, Vx_ej, Vy_ej, Vz_ej, 0)   ! tag=0
+  CALL ADD_ELECTRON_TO_ADD_LIST(electron(indx_particle)%X, electron(indx_particle)%Y, Vx_ej, Vy_ej, Vz_ej, ax, ay, az, 0)   ! tag=0
 !print *, "en_Collision_Ionization_30 :: after ADD_ELECTRON_TO_ADD_LIST"
 !??? diagnostics
 !     N_inject(1) = N_inject(1) + 1
@@ -630,9 +655,10 @@ SUBROUTINE en_Collision_Ionization_30(indx_neutral, indx_particle, energy_inc_eV
   Vy_i = (Vy_i + Uy) * ion_velocity_factor !factor_convert_vion_i(ion_species_produced)  !alpha_Vscl
   Vz_i = (Vz_i + Uz) * ion_velocity_factor !factor_convert_vion_i(ion_species_produced)  !alpha_Vscl
 
+  ax = 0.0_8
+  ay = 0.0_8
 !print *, "en_Collision_Ionization_30 :: before ADD_ION_TO_ADD_LIST"
-
-  CALL ADD_ION_TO_ADD_LIST(ion_species_produced, electron(indx_particle)%X, electron(indx_particle)%Y, Vx_i, Vy_i, Vz_i, 0)   ! tag=0
+  CALL ADD_ION_TO_ADD_LIST(ion_species_produced, electron(indx_particle)%X, electron(indx_particle)%Y, Vx_i, Vy_i, Vz_i, ax, ay, 0)   ! tag=0
 !??? diagnostics
 !print *, "en_Collision_Ionization_30 :: after ADD_ION_TO_ADD_LIST"
 

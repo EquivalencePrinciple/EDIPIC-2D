@@ -27,7 +27,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
   INTEGER pos, i, k
   INTEGER pos_begin, pos_end
 
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay, az
   INTEGER tag
 
 !print '("Process ",i4," entered EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS")', Rank_of_process
@@ -46,7 +46,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
 ! if too many particles, have to increase the size of array electron_to_send_right
         IF (N_e_to_send_right.GT.max_N_e_to_send_right) THEN
 ! save my own particles first
-           ALLOCATE(rbufer(1:current_N*6), STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1:current_N * 9), STAT=ALLOC_ERR)
            pos = 1
            DO i = 1, current_N
               rbufer(pos)   = electron_to_send_right(i)%X
@@ -54,8 +54,11 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
               rbufer(pos+2) = electron_to_send_right(i)%VX
               rbufer(pos+3) = electron_to_send_right(i)%VY
               rbufer(pos+4) = electron_to_send_right(i)%VZ
-              rbufer(pos+5) = DBLE(electron_to_send_right(i)%tag)
-              pos = pos+6
+              rbufer(pos+5) = electron_to_send_right(i)%AX
+              rbufer(pos+6) = electron_to_send_right(i)%AY
+              rbufer(pos+7) = electron_to_send_right(i)%AZ
+              rbufer(pos+8) = DBLE(electron_to_send_right(i)%tag)
+              pos = pos + 9
            END DO
 ! re-size and re-allocate array
            IF (ALLOCATED(electron_to_send_right)) DEALLOCATE(electron_to_send_right, STAT = ALLOC_ERR)
@@ -69,8 +72,11 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
               electron_to_send_right(k)%VX  = rbufer(pos+2) 
               electron_to_send_right(k)%VY  = rbufer(pos+3)
               electron_to_send_right(k)%VZ  = rbufer(pos+4)
-              electron_to_send_right(k)%tag = INT(rbufer(pos+5))
-              pos = pos+6
+              electron_to_send_right(k)%AX  = rbufer(pos+5)
+              electron_to_send_right(k)%AY  = rbufer(pos+6)
+              electron_to_send_right(k)%AZ  = rbufer(pos+7)
+              electron_to_send_right(k)%tag = INT(rbufer(pos+8))
+              pos = pos + 9
            END DO
            DEALLOCATE(rbufer, STAT = ALLOC_ERR)
         END IF
@@ -78,8 +84,8 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
         pos_end = current_N
         DO n = Rank_cluster + N_processes_cluster_right, N_processes_cluster-1, N_processes_cluster_right
            IF (N_e_to_receive_cluster(n).GT.0) THEN
-              ALLOCATE(rbufer(1:N_e_to_receive_cluster(n)*6), STAT=ALLOC_ERR)
-              CALL MPI_RECV(rbufer, N_e_to_receive_cluster(n)*6, MPI_DOUBLE_PRECISION, n, n, COMM_CLUSTER, stattus, ierr)               
+              ALLOCATE(rbufer(1:N_e_to_receive_cluster(n)*9), STAT=ALLOC_ERR)
+              CALL MPI_RECV(rbufer, N_e_to_receive_cluster(n)*9, MPI_DOUBLE_PRECISION, n, n, COMM_CLUSTER, stattus, ierr)               
               pos_begin = pos_end + 1
               pos_end   = pos_end + N_e_to_receive_cluster(n)
               pos = 1
@@ -89,8 +95,11 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
                  electron_to_send_right(k)%VX  = rbufer(pos+2) 
                  electron_to_send_right(k)%VY  = rbufer(pos+3)
                  electron_to_send_right(k)%VZ  = rbufer(pos+4)
-                 electron_to_send_right(k)%tag = INT(rbufer(pos+5))
-                 pos = pos+6
+                 electron_to_send_right(k)%AX  = rbufer(pos+5)
+                 electron_to_send_right(k)%AY  = rbufer(pos+6)
+                 electron_to_send_right(k)%AZ  = rbufer(pos+7)
+                 electron_to_send_right(k)%tag = INT(rbufer(pos+8))
+                 pos = pos + 9
               END DO
               DEALLOCATE(rbufer, STAT=ALLOC_ERR)
            END IF
@@ -100,7 +109,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
         CALL MPI_SEND(N_e_to_send_right, 1, MPI_INTEGER, MOD(Rank_cluster,N_processes_cluster_right), 0, COMM_CLUSTER, request, ierr) 
         IF (N_e_to_send_right.GT.0) THEN
 ! prepare array to send
-           ALLOCATE(rbufer(1:N_e_to_send_right*6), STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1:N_e_to_send_right*9), STAT=ALLOC_ERR)
            pos=1
            DO i = 1, N_e_to_send_right
               rbufer(pos)   = electron_to_send_right(i)%X
@@ -108,11 +117,14 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
               rbufer(pos+2) = electron_to_send_right(i)%VX
               rbufer(pos+3) = electron_to_send_right(i)%VY
               rbufer(pos+4) = electron_to_send_right(i)%VZ
-              rbufer(pos+5) = DBLE(electron_to_send_right(i)%tag)
-              pos = pos+6
+              rbufer(pos+5) = electron_to_send_right(i)%AX
+              rbufer(pos+6) = electron_to_send_right(i)%AY
+              rbufer(pos+7) = electron_to_send_right(i)%AZ
+              rbufer(pos+8) = DBLE(electron_to_send_right(i)%tag)
+              pos = pos + 9
            END DO
 ! send particles
-           CALL MPI_SEND(rbufer, N_e_to_send_right*6, MPI_DOUBLE_PRECISION, MOD(Rank_cluster,N_processes_cluster_right), Rank_cluster, COMM_CLUSTER, request, ierr)     
+           CALL MPI_SEND(rbufer, N_e_to_send_right*9, MPI_DOUBLE_PRECISION, MOD(Rank_cluster,N_processes_cluster_right), Rank_cluster, COMM_CLUSTER, request, ierr)     
 ! clear the counter
            N_e_to_send_right = 0
            DEALLOCATE(rbufer, STAT=ALLOC_ERR)
@@ -137,7 +149,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
 ! if too many particles, have to increase the size of array electron_to_send_left
         IF (N_e_to_send_left.GT.max_N_e_to_send_left) THEN
 ! save my own particles first
-           ALLOCATE(rbufer(1:current_N*6), STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1:current_N * 9), STAT=ALLOC_ERR)
            pos = 1
            DO i = 1, current_N
               rbufer(pos)   = electron_to_send_left(i)%X
@@ -145,8 +157,11 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
               rbufer(pos+2) = electron_to_send_left(i)%VX
               rbufer(pos+3) = electron_to_send_left(i)%VY
               rbufer(pos+4) = electron_to_send_left(i)%VZ
-              rbufer(pos+5) = DBLE(electron_to_send_left(i)%tag)
-              pos = pos+6
+              rbufer(pos+5) = electron_to_send_left(i)%AX
+              rbufer(pos+6) = electron_to_send_left(i)%AY
+              rbufer(pos+7) = electron_to_send_left(i)%AZ
+              rbufer(pos+8) = DBLE(electron_to_send_left(i)%tag)
+              pos = pos + 9
            END DO
 ! re-size and re-allocate array
            IF (ALLOCATED(electron_to_send_left)) DEALLOCATE(electron_to_send_left, STAT = ALLOC_ERR)
@@ -160,8 +175,11 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
               electron_to_send_left(k)%VX  = rbufer(pos+2) 
               electron_to_send_left(k)%VY  = rbufer(pos+3)
               electron_to_send_left(k)%VZ  = rbufer(pos+4)
-              electron_to_send_left(k)%tag = INT(rbufer(pos+5))
-              pos = pos+6
+              electron_to_send_left(k)%AX  = rbufer(pos+5)
+              electron_to_send_left(k)%AY  = rbufer(pos+6)
+              electron_to_send_left(k)%AZ  = rbufer(pos+7)
+              electron_to_send_left(k)%tag = INT(rbufer(pos+8))
+              pos = pos + 9
            END DO
            DEALLOCATE(rbufer, STAT = ALLOC_ERR)
         END IF
@@ -169,8 +187,8 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
         pos_end = current_N
         DO n = Rank_cluster + N_processes_cluster_left, N_processes_cluster-1, N_processes_cluster_left
            IF (N_e_to_receive_cluster(n).GT.0) THEN
-              ALLOCATE(rbufer(1:N_e_to_receive_cluster(n)*6), STAT=ALLOC_ERR)
-              CALL MPI_RECV(rbufer, N_e_to_receive_cluster(n)*6, MPI_DOUBLE_PRECISION, n, n, COMM_CLUSTER, stattus, ierr)               
+              ALLOCATE(rbufer(1:N_e_to_receive_cluster(n) * 9), STAT=ALLOC_ERR)
+              CALL MPI_RECV(rbufer, N_e_to_receive_cluster(n) * 9, MPI_DOUBLE_PRECISION, n, n, COMM_CLUSTER, stattus, ierr)               
               pos_begin = pos_end + 1
               pos_end   = pos_end + N_e_to_receive_cluster(n)
               pos = 1
@@ -180,8 +198,11 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
                  electron_to_send_left(k)%VX  = rbufer(pos+2) 
                  electron_to_send_left(k)%VY  = rbufer(pos+3)
                  electron_to_send_left(k)%VZ  = rbufer(pos+4)
-                 electron_to_send_left(k)%tag = INT(rbufer(pos+5))
-                 pos = pos+6
+                 electron_to_send_left(k)%AX  = rbufer(pos+5)
+                 electron_to_send_left(k)%AY  = rbufer(pos+6)
+                 electron_to_send_left(k)%AZ  = rbufer(pos+7)
+                 electron_to_send_left(k)%tag = INT(rbufer(pos+8))
+                 pos = pos + 9
               END DO
               DEALLOCATE(rbufer, STAT=ALLOC_ERR)
            END IF
@@ -191,7 +212,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
         CALL MPI_SEND(N_e_to_send_left, 1, MPI_INTEGER, MOD(Rank_cluster,N_processes_cluster_left), 0, COMM_CLUSTER, request, ierr) 
         IF (N_e_to_send_left.GT.0) THEN
 ! prepare array to send
-           ALLOCATE(rbufer(1:N_e_to_send_left*6), STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1:N_e_to_send_left * 9), STAT=ALLOC_ERR)
            pos=1
            DO i = 1, N_e_to_send_left
               rbufer(pos)   = electron_to_send_left(i)%X
@@ -199,11 +220,14 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
               rbufer(pos+2) = electron_to_send_left(i)%VX
               rbufer(pos+3) = electron_to_send_left(i)%VY
               rbufer(pos+4) = electron_to_send_left(i)%VZ
-              rbufer(pos+5) = DBLE(electron_to_send_left(i)%tag)
-              pos = pos+6
+              rbufer(pos+5) = electron_to_send_left(i)%AX
+              rbufer(pos+6) = electron_to_send_left(i)%AY
+              rbufer(pos+7) = electron_to_send_left(i)%AZ
+              rbufer(pos+8) = DBLE(electron_to_send_left(i)%tag)
+              pos = pos + 9
            END DO
 ! send particles
-           CALL MPI_SEND(rbufer, N_e_to_send_left*6, MPI_DOUBLE_PRECISION, MOD(Rank_cluster,N_processes_cluster_left), Rank_cluster, COMM_CLUSTER, request, ierr)     
+           CALL MPI_SEND(rbufer, N_e_to_send_left * 9, MPI_DOUBLE_PRECISION, MOD(Rank_cluster,N_processes_cluster_left), Rank_cluster, COMM_CLUSTER, request, ierr)     
 ! clear the counter
            N_e_to_send_left = 0
            DEALLOCATE(rbufer, STAT=ALLOC_ERR)
@@ -215,7 +239,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
   CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
 
   IF (WHITE_CLUSTER) THEN  ! WHITE='TRUE' ############################################################################################
-! "white processes"
+! "white processes" processes within white cluster?
 
 ! ##  1 ## send right the number of particles ----------------------------------
      IF (Rank_horizontal_right.GE.0) THEN
@@ -223,7 +247,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
 
 ! ##  2 ## send right the particles
         IF (N_e_to_send_right.GT.0) THEN
-           ALLOCATE(rbufer(1:N_e_to_send_right*6), STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1:N_e_to_send_right * 9), STAT=ALLOC_ERR)
            pos=1
            DO i = 1, N_e_to_send_right
               rbufer(pos)   = electron_to_send_right(i)%X
@@ -231,11 +255,14 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
               rbufer(pos+2) = electron_to_send_right(i)%VX
               rbufer(pos+3) = electron_to_send_right(i)%VY
               rbufer(pos+4) = electron_to_send_right(i)%VZ
-              rbufer(pos+5) = DBLE(electron_to_send_right(i)%tag)
-              pos = pos+6
+              rbufer(pos+5) = electron_to_send_right(i)%AX
+              rbufer(pos+6) = electron_to_send_right(i)%AY
+              rbufer(pos+7) = electron_to_send_right(i)%AZ
+              rbufer(pos+8) = DBLE(electron_to_send_right(i)%tag)
+              pos = pos + 9
            END DO
 ! send particles to right neighbor
-           CALL MPI_SEND(rbufer, N_e_to_send_right*6, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, request, ierr)     
+           CALL MPI_SEND(rbufer, N_e_to_send_right * 9, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, request, ierr)     
 ! clear the counter
            N_e_to_send_right = 0
            DEALLOCATE(rbufer, STAT=ALLOC_ERR)
@@ -250,7 +277,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
 
 ! ##  4 ## send left the particles
         IF (N_e_to_send_left.GT.0) THEN
-           ALLOCATE(rbufer(1:N_e_to_send_left*6), STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1:N_e_to_send_left*9), STAT=ALLOC_ERR)
            pos=1
            DO i = 1, N_e_to_send_left
               rbufer(pos)   = electron_to_send_left(i)%X
@@ -258,11 +285,14 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
               rbufer(pos+2) = electron_to_send_left(i)%VX
               rbufer(pos+3) = electron_to_send_left(i)%VY
               rbufer(pos+4) = electron_to_send_left(i)%VZ
-              rbufer(pos+5) = DBLE(electron_to_send_left(i)%tag)
-              pos = pos+6
+              rbufer(pos+5) = electron_to_send_left(i)%AX
+              rbufer(pos+6) = electron_to_send_left(i)%AY
+              rbufer(pos+7) = electron_to_send_left(i)%AZ
+              rbufer(pos+8) = DBLE(electron_to_send_left(i)%tag)
+              pos = pos + 9
            END DO
 ! send particles to left neighbor
-           CALL MPI_SEND(rbufer, N_e_to_send_left*6, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, request, ierr)     
+           CALL MPI_SEND(rbufer, N_e_to_send_left * 9, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, request, ierr)     
 ! clear the counter
            N_e_to_send_left = 0
            DEALLOCATE(rbufer, STAT=ALLOC_ERR)
@@ -278,8 +308,8 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
 ! ##  6 ## receive from left the particles
         IF (N_e_to_receive.GT.0) THEN
 ! receive particles from left neighbor
-           ALLOCATE(rbufer(1:N_e_to_receive*6), STAT=ALLOC_ERR)
-           CALL MPI_RECV(rbufer, N_e_to_receive*6, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal_left, COMM_HORIZONTAL, stattus, ierr)     
+           ALLOCATE(rbufer(1:N_e_to_receive * 9), STAT=ALLOC_ERR)
+           CALL MPI_RECV(rbufer, N_e_to_receive * 9, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal_left, COMM_HORIZONTAL, stattus, ierr)     
 ! process the received particles
            pos=1
            DO i = 1, N_e_to_receive
@@ -288,19 +318,22 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
               vx  = rbufer(pos+2)
               vy  = rbufer(pos+3)
               vz  = rbufer(pos+4)
-              tag = INT(rbufer(pos+5))
-              pos = pos+6
+              ax  = rbufer(pos+5)
+              ay  = rbufer(pos+6)
+              az  = rbufer(pos+7)
+              tag = INT(rbufer(pos+8))
+              pos = pos + 9
               IF ((y.GE.c_Y_area_min).AND.(y.LE.c_Y_area_max)) THEN
-                 CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+                 CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
               ELSE IF (y.LT.c_Y_area_min) THEN
                  IF (Rank_of_master_below.GE.0) THEN
-                    CALL ADD_ELECTRON_TO_SEND_BELOW(x, y, vx, vy, vz, tag)              
+                    CALL ADD_ELECTRON_TO_SEND_BELOW(x, y, vx, vy, vz, ax, ay, az, tag)              
                  ELSE
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_BELOW(x, y, vx, vy, vz, tag)
                  END IF
               ELSE IF (y.GT.c_Y_area_max) THEN
                  IF (Rank_of_master_above.GE.0) THEN
-                    CALL ADD_ELECTRON_TO_SEND_ABOVE(x, y, vx, vy, vz, tag)              
+                    CALL ADD_ELECTRON_TO_SEND_ABOVE(x, y, vx, vy, vz, ax, ay, az, tag)              
                  ELSE
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE(x, y, vx, vy, vz, tag)
                  END IF
@@ -319,8 +352,8 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
 ! ##  8 ## receive from right the particles
         IF (N_e_to_receive.GT.0) THEN
 ! receive particles from right neighbor
-           ALLOCATE(rbufer(1:N_e_to_receive*6), STAT=ALLOC_ERR)
-           CALL MPI_RECV(rbufer, N_e_to_receive*6, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal_right, COMM_HORIZONTAL, stattus, ierr)     
+           ALLOCATE(rbufer(1:N_e_to_receive * 9), STAT=ALLOC_ERR)
+           CALL MPI_RECV(rbufer, N_e_to_receive * 9, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal_right, COMM_HORIZONTAL, stattus, ierr)     
 ! process the received particles
            pos = 1
            DO i = 1, N_e_to_receive
@@ -329,19 +362,22 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
               vx  = rbufer(pos+2)
               vy  = rbufer(pos+3)
               vz  = rbufer(pos+4)
-              tag = INT(rbufer(pos+5))
-              pos = pos+6
+              ax  = rbufer(pos+5)
+              ay  = rbufer(pos+6)
+              az =  rbufer(pos+7)
+              tag = INT(rbufer(pos+8))
+              pos = pos + 9
               IF ((y.GE.c_Y_area_min).AND.(y.LE.c_Y_area_max)) THEN
-                 CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+                 CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
               ELSE IF (y.LT.c_Y_area_min) THEN
                  IF (Rank_of_master_below.GE.0) THEN
-                    CALL ADD_ELECTRON_TO_SEND_BELOW(x, y, vx, vy, vz, tag)              
+                    CALL ADD_ELECTRON_TO_SEND_BELOW(x, y, vx, vy, vz, ax, ay, az, tag)              
                  ELSE
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_BELOW(x, y, vx, vy, vz, tag)
                  END IF
               ELSE IF (y.GT.c_Y_area_max) THEN
                  IF (Rank_of_master_above.GE.0) THEN
-                    CALL ADD_ELECTRON_TO_SEND_ABOVE(x, y, vx, vy, vz, tag)              
+                    CALL ADD_ELECTRON_TO_SEND_ABOVE(x, y, vx, vy, vz, ax, ay, az, tag)              
                  ELSE
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE(x, y, vx, vy, vz, tag)
                  END IF
@@ -363,8 +399,8 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
 ! ##  2 ## receive from left the particles
         IF (N_e_to_receive.GT.0) THEN
 ! receive particles from left neighbor
-           ALLOCATE(rbufer(1:N_e_to_receive*6), STAT=ALLOC_ERR)
-           CALL MPI_RECV(rbufer, N_e_to_receive*6, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal_left, COMM_HORIZONTAL, stattus, ierr)     
+           ALLOCATE(rbufer(1:N_e_to_receive * 9), STAT=ALLOC_ERR)
+           CALL MPI_RECV(rbufer, N_e_to_receive * 9, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal_left, COMM_HORIZONTAL, stattus, ierr)     
 ! process the received particles
            pos = 1
            DO i = 1, N_e_to_receive
@@ -373,19 +409,22 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
               vx  = rbufer(pos+2)
               vy  = rbufer(pos+3)
               vz  = rbufer(pos+4)
-              tag = INT(rbufer(pos+5))
-              pos = pos+6
+              ax  = rbufer(pos+5)
+              ay  = rbufer(pos+6)
+              az =  rbufer(pos+7)
+              tag = INT(rbufer(pos+8))
+              pos = pos + 9
               IF ((y.GE.c_Y_area_min).AND.(y.LE.c_Y_area_max)) THEN
-                 CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+                 CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
               ELSE IF (y.LT.c_Y_area_min) THEN
                  IF (Rank_of_master_below.GE.0) THEN
-                    CALL ADD_ELECTRON_TO_SEND_BELOW(x, y, vx, vy, vz, tag)              
+                    CALL ADD_ELECTRON_TO_SEND_BELOW(x, y, vx, vy, vz, ax, ay, az, tag)              
                  ELSE
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_BELOW(x, y, vx, vy, vz, tag)
                  END IF
               ELSE IF (y.GT.c_Y_area_max) THEN
                  IF (Rank_of_master_above.GE.0) THEN
-                    CALL ADD_ELECTRON_TO_SEND_ABOVE(x, y, vx, vy, vz, tag)              
+                    CALL ADD_ELECTRON_TO_SEND_ABOVE(x, y, vx, vy, vz, ax, ay, az, tag)              
                  ELSE
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE(x, y, vx, vy, vz, tag)
                  END IF
@@ -404,9 +443,9 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
 ! ##  4 ## receive from right the particles
         IF (N_e_to_receive.GT.0) THEN
 ! receive particles from right neighbor
-           ALLOCATE(rbufer(1:N_e_to_receive*6), STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1:N_e_to_receive * 9), STAT=ALLOC_ERR)
 !           CALL MPI_PROBE(Rank_horizontal_right, Rank_horizontal_right, COMM_HORIZONTAL, stattus, ierr)
-           CALL MPI_RECV(rbufer, N_e_to_receive*6, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal_right, COMM_HORIZONTAL, stattus, ierr)     
+           CALL MPI_RECV(rbufer, N_e_to_receive * 9, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal_right, COMM_HORIZONTAL, stattus, ierr)     
 ! process the received particles
            pos=1
            DO i = 1, N_e_to_receive
@@ -415,19 +454,22 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
               vx  = rbufer(pos+2)
               vy  = rbufer(pos+3)
               vz  = rbufer(pos+4)
-              tag = INT(rbufer(pos+5))
-              pos = pos+6
+              ax  = rbufer(pos+5)
+              ay  = rbufer(pos+6)
+              az =  rbufer(pos+7)
+              tag = INT(rbufer(pos+8))
+              pos = pos + 9
               IF ((y.GE.c_Y_area_min).AND.(y.LE.c_Y_area_max)) THEN
-                 CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+                 CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
               ELSE IF (y.LT.c_Y_area_min) THEN
                  IF (Rank_of_master_below.GE.0) THEN
-                    CALL ADD_ELECTRON_TO_SEND_BELOW(x, y, vx, vy, vz, tag)              
+                    CALL ADD_ELECTRON_TO_SEND_BELOW(x, y, vx, vy, vz, ax, ay, az, tag)              
                  ELSE
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_BELOW(x, y, vx, vy, vz, tag)
                  END IF
               ELSE IF (y.GT.c_Y_area_max) THEN
                  IF (Rank_of_master_above.GE.0) THEN
-                    CALL ADD_ELECTRON_TO_SEND_ABOVE(x, y, vx, vy, vz, tag)              
+                    CALL ADD_ELECTRON_TO_SEND_ABOVE(x, y, vx, vy, vz, ax, ay, az, tag)              
                  ELSE
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE(x, y, vx, vy, vz, tag)
                  END IF
@@ -450,7 +492,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
 ! otherwise
 ! prepare array to send to right neighbor
            IF (.NOT.ALLOCATED(rbufer)) THEN
-              ALLOCATE(rbufer(1:N_e_to_send_right*6), STAT=ALLOC_ERR)
+              ALLOCATE(rbufer(1:N_e_to_send_right * 9), STAT=ALLOC_ERR)
               pos=1
               DO i = 1, N_e_to_send_right
                  rbufer(pos)   = electron_to_send_right(i)%X
@@ -458,12 +500,15 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
                  rbufer(pos+2) = electron_to_send_right(i)%VX
                  rbufer(pos+3) = electron_to_send_right(i)%VY
                  rbufer(pos+4) = electron_to_send_right(i)%VZ
-                 rbufer(pos+5) = DBLE(electron_to_send_right(i)%tag)
-                 pos = pos+6
+                 rbufer(pos+5) = electron_to_send_right(i)%AX
+                 rbufer(pos+6) = electron_to_send_right(i)%AY
+                 rbufer(pos+7) = electron_to_send_right(i)%AZ
+                 rbufer(pos+8) = DBLE(electron_to_send_right(i)%tag)
+                 pos = pos + 9
               END DO
            END IF
 ! send particles to right neighbor
-           CALL MPI_SEND(rbufer, N_e_to_send_right*6, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, request, ierr)     
+           CALL MPI_SEND(rbufer, N_e_to_send_right * 9, MPI_DOUBLE_PRECISION, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, request, ierr)     
 ! clear the counter
            N_e_to_send_right = 0
            DEALLOCATE(rbufer, STAT=ALLOC_ERR)
@@ -483,7 +528,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
 ! otherwise
 ! prepare array to send to left neighbor
            IF (.NOT.ALLOCATED(rbufer)) THEN
-              ALLOCATE(rbufer(1:N_e_to_send_left*6), STAT=ALLOC_ERR)
+              ALLOCATE(rbufer(1:N_e_to_send_left * 9), STAT=ALLOC_ERR)
               pos=1
               DO i = 1, N_e_to_send_left
                  rbufer(pos)   = electron_to_send_left(i)%X
@@ -491,12 +536,15 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_LEFT_RIGHT_NEIGHBOURS
                  rbufer(pos+2) = electron_to_send_left(i)%VX
                  rbufer(pos+3) = electron_to_send_left(i)%VY
                  rbufer(pos+4) = electron_to_send_left(i)%VZ
-                 rbufer(pos+5) = DBLE(electron_to_send_left(i)%tag)
-                 pos = pos+6
+                 rbufer(pos+5) = electron_to_send_left(i)%AX
+                 rbufer(pos+6) = electron_to_send_left(i)%AY
+                 rbufer(pos+7) = electron_to_send_left(i)%AZ
+                 rbufer(pos+8) = DBLE(electron_to_send_left(i)%tag)
+                 pos = pos + 9
               END DO
            END IF
 ! send particles to left neighbor
-           CALL MPI_SEND(rbufer, N_e_to_send_left*6, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, request, ierr)     
+           CALL MPI_SEND(rbufer, N_e_to_send_left*9, MPI_DOUBLE_PRECISION, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, request, ierr)     
 ! clear the counter
            N_e_to_send_left = 0
            DEALLOCATE(rbufer, STAT=ALLOC_ERR)
@@ -542,7 +590,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
   INTEGER pos, i, k
   INTEGER pos_begin, pos_end
 
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay, az
   INTEGER tag
 
 !print '("Process ",i4," entered EXCHANGE_ELECTRONS_WITH_NEIGHBOURS")', Rank_of_process
@@ -560,7 +608,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
 ! if too many particles, have to increase the size of array electron_to_send_above
         IF (N_e_to_send_above.GT.max_N_e_to_send_above) THEN
 ! save my own particles first
-           ALLOCATE(rbufer(1:current_N*6), STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1:current_N * 9), STAT=ALLOC_ERR)
            pos = 1
            DO i = 1, current_N
               rbufer(pos)   = electron_to_send_above(i)%X
@@ -568,8 +616,11 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
               rbufer(pos+2) = electron_to_send_above(i)%VX
               rbufer(pos+3) = electron_to_send_above(i)%VY
               rbufer(pos+4) = electron_to_send_above(i)%VZ
-              rbufer(pos+5) = DBLE(electron_to_send_above(i)%tag)
-              pos = pos+6
+              rbufer(pos+5) = electron_to_send_above(i)%AX
+              rbufer(pos+6) = electron_to_send_above(i)%AY
+              rbufer(pos+7) = electron_to_send_above(i)%AZ
+              rbufer(pos+8) = DBLE(electron_to_send_above(i)%tag)
+              pos = pos + 9
            END DO
 ! re-size and re-allocate array
            IF (ALLOCATED(electron_to_send_above)) DEALLOCATE(electron_to_send_above, STAT = ALLOC_ERR)
@@ -583,8 +634,11 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
               electron_to_send_above(k)%VX  = rbufer(pos+2) 
               electron_to_send_above(k)%VY  = rbufer(pos+3)
               electron_to_send_above(k)%VZ  = rbufer(pos+4)
-              electron_to_send_above(k)%tag = INT(rbufer(pos+5))
-              pos = pos+6
+              electron_to_send_above(k)%AX  = rbufer(pos+5)
+              electron_to_send_above(k)%AY  = rbufer(pos+6)
+              electron_to_send_above(k)%AZ  = rbufer(pos+7)
+              electron_to_send_above(k)%tag = INT(rbufer(pos+8))
+              pos = pos + 9
            END DO
            DEALLOCATE(rbufer, STAT = ALLOC_ERR)
         END IF
@@ -592,8 +646,8 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
         pos_end = current_N
         DO n = Rank_cluster + N_processes_cluster_above, N_processes_cluster-1, N_processes_cluster_above
            IF (N_e_to_receive_cluster(n).GT.0) THEN
-              ALLOCATE(rbufer(1:N_e_to_receive_cluster(n)*6), STAT=ALLOC_ERR)
-              CALL MPI_RECV(rbufer, N_e_to_receive_cluster(n)*6, MPI_DOUBLE_PRECISION, n, n, COMM_CLUSTER, stattus, ierr)               
+              ALLOCATE(rbufer(1:N_e_to_receive_cluster(n) * 9), STAT=ALLOC_ERR)
+              CALL MPI_RECV(rbufer, N_e_to_receive_cluster(n) * 9, MPI_DOUBLE_PRECISION, n, n, COMM_CLUSTER, stattus, ierr)               
               pos_begin = pos_end + 1
               pos_end   = pos_end + N_e_to_receive_cluster(n)
               pos = 1
@@ -603,8 +657,11 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
                  electron_to_send_above(k)%VX  = rbufer(pos+2) 
                  electron_to_send_above(k)%VY  = rbufer(pos+3)
                  electron_to_send_above(k)%VZ  = rbufer(pos+4)
-                 electron_to_send_above(k)%tag = INT(rbufer(pos+5))
-                 pos = pos+6
+                 electron_to_send_above(k)%AX  = rbufer(pos+5)
+                 electron_to_send_above(k)%AY  = rbufer(pos+6)
+                 electron_to_send_above(k)%AZ  = rbufer(pos+7)
+                 electron_to_send_above(k)%tag = INT(rbufer(pos+8))
+                 pos = pos + 9
               END DO
               DEALLOCATE(rbufer, STAT=ALLOC_ERR)
            END IF
@@ -614,7 +671,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
         CALL MPI_SEND(N_e_to_send_above, 1, MPI_INTEGER, MOD(Rank_cluster,N_processes_cluster_above), 0, COMM_CLUSTER, request, ierr) 
         IF (N_e_to_send_above.GT.0) THEN
 ! prepare array to send
-           ALLOCATE(rbufer(1:N_e_to_send_above*6), STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1:N_e_to_send_above * 9), STAT=ALLOC_ERR)
            pos=1
            DO i = 1, N_e_to_send_above
               rbufer(pos)   = electron_to_send_above(i)%X
@@ -622,11 +679,14 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
               rbufer(pos+2) = electron_to_send_above(i)%VX
               rbufer(pos+3) = electron_to_send_above(i)%VY
               rbufer(pos+4) = electron_to_send_above(i)%VZ
-              rbufer(pos+5) = DBLE(electron_to_send_above(i)%tag)
-              pos = pos+6
+              rbufer(pos+5) = electron_to_send_above(i)%AX
+              rbufer(pos+6) = electron_to_send_above(i)%AY
+              rbufer(pos+7) = electron_to_send_above(i)%AZ
+              rbufer(pos+8) = DBLE(electron_to_send_above(i)%tag)
+              pos = pos + 9
            END DO
-! send particles
-           CALL MPI_SEND(rbufer, N_e_to_send_above*6, MPI_DOUBLE_PRECISION, MOD(Rank_cluster,N_processes_cluster_above), Rank_cluster, COMM_CLUSTER, request, ierr)     
+! send particles 
+           CALL MPI_SEND(rbufer, N_e_to_send_above * 9, MPI_DOUBLE_PRECISION, MOD(Rank_cluster,N_processes_cluster_above), Rank_cluster, COMM_CLUSTER, request, ierr)     
 ! clear the counter
            N_e_to_send_above = 0
            DEALLOCATE(rbufer, STAT=ALLOC_ERR)
@@ -651,7 +711,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
 ! if too many particles, have to increase the size of array electron_to_send_below
         IF (N_e_to_send_below.GT.max_N_e_to_send_below) THEN
 ! save my own particles first
-           ALLOCATE(rbufer(1:current_N*6), STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1:current_N * 9), STAT=ALLOC_ERR)
            pos = 1
            DO i = 1, current_N
               rbufer(pos)   = electron_to_send_below(i)%X
@@ -659,8 +719,11 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
               rbufer(pos+2) = electron_to_send_below(i)%VX
               rbufer(pos+3) = electron_to_send_below(i)%VY
               rbufer(pos+4) = electron_to_send_below(i)%VZ
-              rbufer(pos+5) = DBLE(electron_to_send_below(i)%tag)
-              pos = pos+6
+              rbufer(pos+5) = electron_to_send_below(i)%AX
+              rbufer(pos+6) = electron_to_send_below(i)%AY
+              rbufer(pos+7) = electron_to_send_below(i)%AZ
+              rbufer(pos+8) = DBLE(electron_to_send_below(i)%tag)
+              pos = pos + 9
            END DO
 ! re-size and re-allocate array
            IF (ALLOCATED(electron_to_send_below)) DEALLOCATE(electron_to_send_below, STAT = ALLOC_ERR)
@@ -674,8 +737,11 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
               electron_to_send_below(k)%VX  = rbufer(pos+2) 
               electron_to_send_below(k)%VY  = rbufer(pos+3)
               electron_to_send_below(k)%VZ  = rbufer(pos+4)
-              electron_to_send_below(k)%tag = INT(rbufer(pos+5))
-              pos = pos+6
+              electron_to_send_below(k)%AX  = rbufer(pos+5)
+              electron_to_send_below(k)%AY  = rbufer(pos+6)
+              electron_to_send_below(k)%AZ  = rbufer(pos+7)
+              electron_to_send_below(k)%tag = INT(rbufer(pos+8))
+              pos = pos + 9
            END DO
            DEALLOCATE(rbufer, STAT = ALLOC_ERR)
         END IF
@@ -683,8 +749,8 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
         pos_end = current_N
         DO n = Rank_cluster + N_processes_cluster_below, N_processes_cluster-1, N_processes_cluster_below
            IF (N_e_to_receive_cluster(n).GT.0) THEN
-              ALLOCATE(rbufer(1:N_e_to_receive_cluster(n)*6), STAT=ALLOC_ERR)
-              CALL MPI_RECV(rbufer, N_e_to_receive_cluster(n)*6, MPI_DOUBLE_PRECISION, n, n, COMM_CLUSTER, stattus, ierr)               
+              ALLOCATE(rbufer(1:N_e_to_receive_cluster(n) * 9), STAT=ALLOC_ERR)
+              CALL MPI_RECV(rbufer, N_e_to_receive_cluster(n) * 9, MPI_DOUBLE_PRECISION, n, n, COMM_CLUSTER, stattus, ierr)               
               pos_begin = pos_end + 1
               pos_end   = pos_end + N_e_to_receive_cluster(n)
               pos = 1
@@ -694,8 +760,11 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
                  electron_to_send_below(k)%VX  = rbufer(pos+2) 
                  electron_to_send_below(k)%VY  = rbufer(pos+3)
                  electron_to_send_below(k)%VZ  = rbufer(pos+4)
-                 electron_to_send_below(k)%tag = INT(rbufer(pos+5))
-                 pos = pos+6
+                 electron_to_send_below(k)%AX  = rbufer(pos+5)
+                 electron_to_send_below(k)%AY  = rbufer(pos+6)
+                 electron_to_send_below(k)%AZ  = rbufer(pos+7)
+                 electron_to_send_below(k)%tag = INT(rbufer(pos+8))
+                 pos = pos + 9
               END DO
               DEALLOCATE(rbufer, STAT=ALLOC_ERR)
            END IF
@@ -705,7 +774,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
         CALL MPI_SEND(N_e_to_send_below, 1, MPI_INTEGER, MOD(Rank_cluster,N_processes_cluster_below), 0, COMM_CLUSTER, request, ierr) 
         IF (N_e_to_send_below.GT.0) THEN
 ! prepare array to send
-           ALLOCATE(rbufer(1:N_e_to_send_below*6), STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1:N_e_to_send_below * 9), STAT=ALLOC_ERR)
            pos=1
            DO i = 1, N_e_to_send_below
               rbufer(pos)   = electron_to_send_below(i)%X
@@ -713,11 +782,14 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
               rbufer(pos+2) = electron_to_send_below(i)%VX
               rbufer(pos+3) = electron_to_send_below(i)%VY
               rbufer(pos+4) = electron_to_send_below(i)%VZ
-              rbufer(pos+5) = DBLE(electron_to_send_below(i)%tag)
-              pos = pos+6
+              rbufer(pos+5) = electron_to_send_below(i)%AX
+              rbufer(pos+6) = electron_to_send_below(i)%AY
+              rbufer(pos+7) = electron_to_send_below(i)%AZ
+              rbufer(pos+8) = DBLE(electron_to_send_below(i)%tag)
+              pos = pos + 9
            END DO
 ! send particles
-           CALL MPI_SEND(rbufer, N_e_to_send_below*6, MPI_DOUBLE_PRECISION, MOD(Rank_cluster,N_processes_cluster_below), Rank_cluster, COMM_CLUSTER, request, ierr)     
+           CALL MPI_SEND(rbufer, N_e_to_send_below*9, MPI_DOUBLE_PRECISION, MOD(Rank_cluster,N_processes_cluster_below), Rank_cluster, COMM_CLUSTER, request, ierr)     
 ! clear the counter
            N_e_to_send_below = 0
            DEALLOCATE(rbufer, STAT=ALLOC_ERR)
@@ -737,7 +809,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
 
 ! ## 10 ## send up the particles
         IF (N_e_to_send_above.GT.0) THEN
-           ALLOCATE(rbufer(1:N_e_to_send_above*6), STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1:N_e_to_send_above * 9), STAT=ALLOC_ERR)
            pos=1
            DO i = 1, N_e_to_send_above
               rbufer(pos)   = electron_to_send_above(i)%X
@@ -745,11 +817,14 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
               rbufer(pos+2) = electron_to_send_above(i)%VX
               rbufer(pos+3) = electron_to_send_above(i)%VY
               rbufer(pos+4) = electron_to_send_above(i)%VZ
-              rbufer(pos+5) = DBLE(electron_to_send_above(i)%tag)
-              pos = pos+6
+              rbufer(pos+5) = electron_to_send_above(i)%AX
+              rbufer(pos+6) = electron_to_send_above(i)%AY
+              rbufer(pos+7) = electron_to_send_above(i)%AZ
+              rbufer(pos+8) = DBLE(electron_to_send_above(i)%tag)
+              pos = pos + 9
            END DO
 ! send particles to neighbor above
-           CALL MPI_SEND(rbufer, N_e_to_send_above*6, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, request, ierr)     
+           CALL MPI_SEND(rbufer, N_e_to_send_above * 9, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, request, ierr)     
 ! clear the counter
            N_e_to_send_above = 0
            DEALLOCATE(rbufer, STAT=ALLOC_ERR)
@@ -764,7 +839,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
 
 ! ## 12 ## send down the particles
         IF (N_e_to_send_below.GT.0) THEN
-           ALLOCATE(rbufer(1:N_e_to_send_below*6), STAT=ALLOC_ERR)
+           ALLOCATE(rbufer(1:N_e_to_send_below * 9), STAT=ALLOC_ERR)
            pos=1
            DO i = 1, N_e_to_send_below
               rbufer(pos)   = electron_to_send_below(i)%X
@@ -772,11 +847,14 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
               rbufer(pos+2) = electron_to_send_below(i)%VX
               rbufer(pos+3) = electron_to_send_below(i)%VY
               rbufer(pos+4) = electron_to_send_below(i)%VZ
-              rbufer(pos+5) = DBLE(electron_to_send_below(i)%tag)
-              pos = pos+6
+              rbufer(pos+5) = electron_to_send_below(i)%AX
+              rbufer(pos+6) = electron_to_send_below(i)%AY
+              rbufer(pos+7) = electron_to_send_below(i)%AZ
+              rbufer(pos+8) = DBLE(electron_to_send_below(i)%tag)
+              pos = pos + 9
            END DO
 ! send particles to neighbor below
-           CALL MPI_SEND(rbufer, N_e_to_send_below*6, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr)     
+           CALL MPI_SEND(rbufer, N_e_to_send_below * 9, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr)     
 ! clear the counter
            N_e_to_send_below = 0
            DEALLOCATE(rbufer, STAT=ALLOC_ERR)
@@ -792,8 +870,8 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
 ! ## 14 ## receive from below the particles
         IF (N_e_to_receive.GT.0) THEN
 ! receive particles from neighbor below
-           ALLOCATE(rbufer(1:N_e_to_receive*6), STAT=ALLOC_ERR)
-           CALL MPI_RECV(rbufer, N_e_to_receive*6, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal_below, COMM_HORIZONTAL, stattus, ierr)     
+           ALLOCATE(rbufer(1:N_e_to_receive * 9), STAT=ALLOC_ERR)
+           CALL MPI_RECV(rbufer, N_e_to_receive*9, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal_below, COMM_HORIZONTAL, stattus, ierr)     
 ! process the received particles
            pos=1
            DO i = 1, N_e_to_receive
@@ -802,19 +880,22 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
               vx  = rbufer(pos+2)
               vy  = rbufer(pos+3)
               vz  = rbufer(pos+4)
-              tag = INT(rbufer(pos+5))
-              pos = pos+6
+              ax  = rbufer(pos+5)
+              ay  = rbufer(pos+6)
+              az  = rbufer(pos+7)
+              tag = INT(rbufer(pos+8))
+              pos = pos + 9
               IF ((x.GE.c_X_area_min).AND.(x.LE.c_X_area_max)) THEN
-                 CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+                 CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
               ELSE IF (x.LT.c_X_area_min) THEN
                  IF (Rank_of_master_left.GE.0) THEN
-                    CALL ADD_ELECTRON_TO_SEND_LEFT(x, y, vx, vy, vz, tag)              
+                    CALL ADD_ELECTRON_TO_SEND_LEFT(x, y, vx, vy, vz, ax, ay, az, tag)              
                  ELSE
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_LEFT(x, y, vx, vy, vz, tag)
                  END IF
               ELSE IF (x.GT.c_X_area_max) THEN
                  IF (Rank_of_master_right.GE.0) THEN
-                    CALL ADD_ELECTRON_TO_SEND_RIGHT(x, y, vx, vy, vz, tag)              
+                    CALL ADD_ELECTRON_TO_SEND_RIGHT(x, y, vx, vy, vz, ax, ay, az, tag)              
                  ELSE
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_RIGHT(x, y, vx, vy, vz, tag)
                  END IF
@@ -834,8 +915,8 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
         IF (N_e_to_receive.GT.0) THEN
 !print '("Process ",i4," >> D-4")', Rank_horizontal
 ! receive particles from neighbor above
-           ALLOCATE(rbufer(1:N_e_to_receive*6), STAT=ALLOC_ERR)
-           CALL MPI_RECV(rbufer, N_e_to_receive*6, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal_above, COMM_HORIZONTAL, stattus, ierr)     
+           ALLOCATE(rbufer(1:N_e_to_receive * 9), STAT=ALLOC_ERR)
+           CALL MPI_RECV(rbufer, N_e_to_receive*9, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal_above, COMM_HORIZONTAL, stattus, ierr)     
 !print '("Process ",i4," >> D-5")', Rank_horizontal
 ! process the received particles
            pos=1
@@ -845,19 +926,22 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
               vx  = rbufer(pos+2)
               vy  = rbufer(pos+3)
               vz  = rbufer(pos+4)
-              tag = INT(rbufer(pos+5))
-              pos = pos+6
+              ax  = rbufer(pos+5)
+              ay  = rbufer(pos+6)
+              az  = rbufer(pos+7)
+              tag = INT(rbufer(pos+8))
+              pos = pos + 9
               IF ((x.GE.c_X_area_min).AND.(x.LE.c_X_area_max)) THEN
-                 CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+                 CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
               ELSE IF (x.LT.c_X_area_min) THEN
                  IF (Rank_of_master_left.GE.0) THEN
-                    CALL ADD_ELECTRON_TO_SEND_LEFT(x, y, vx, vy, vz, tag)              
+                    CALL ADD_ELECTRON_TO_SEND_LEFT(x, y, vx, vy, vz, ax, ay, az, tag)              
                  ELSE
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_LEFT(x, y, vx, vy, vz, tag)
                  END IF
               ELSE IF (x.GT.c_X_area_max) THEN
                  IF (Rank_of_master_right.GE.0) THEN
-                    CALL ADD_ELECTRON_TO_SEND_RIGHT(x, y, vx, vy, vz, tag)              
+                    CALL ADD_ELECTRON_TO_SEND_RIGHT(x, y, vx, vy, vz, ax, ay, az, tag)              
                  ELSE
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_RIGHT(x, y, vx, vy, vz, tag)
                  END IF
@@ -880,8 +964,8 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
 ! ## 10 ## receive from below the particles
         IF (N_e_to_receive.GT.0) THEN
 ! receive particles from neighbor below
-           ALLOCATE(rbufer(1:N_e_to_receive*6), STAT=ALLOC_ERR)
-           CALL MPI_RECV(rbufer, N_e_to_receive*6, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal_below, COMM_HORIZONTAL, stattus, ierr)     
+           ALLOCATE(rbufer(1:N_e_to_receive * 9), STAT=ALLOC_ERR)
+           CALL MPI_RECV(rbufer, N_e_to_receive*9, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal_below, COMM_HORIZONTAL, stattus, ierr)     
 ! process the received particles
            pos=1
            DO i = 1, N_e_to_receive
@@ -890,19 +974,22 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
               vx  = rbufer(pos+2)
               vy  = rbufer(pos+3)
               vz  = rbufer(pos+4)
-              tag = INT(rbufer(pos+5))
-              pos = pos+6
+              ax  = rbufer(pos+5)
+              ay  = rbufer(pos+6)
+              az  = rbufer(pos+7)
+              tag = INT(rbufer(pos+8))
+              pos = pos + 9
               IF ((x.GE.c_X_area_min).AND.(x.LE.c_X_area_max)) THEN
-                 CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+                 CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
               ELSE IF (x.LT.c_X_area_min) THEN
                  IF (Rank_of_master_left.GE.0) THEN
-                    CALL ADD_ELECTRON_TO_SEND_LEFT(x, y, vx, vy, vz, tag)              
+                    CALL ADD_ELECTRON_TO_SEND_LEFT(x, y, vx, vy, vz, ax, ay, az, tag)              
                  ELSE
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_LEFT(x, y, vx, vy, vz, tag)
                  END IF
               ELSE IF (x.GT.c_X_area_max) THEN
                  IF (Rank_of_master_right.GE.0) THEN
-                    CALL ADD_ELECTRON_TO_SEND_RIGHT(x, y, vx, vy, vz, tag)              
+                    CALL ADD_ELECTRON_TO_SEND_RIGHT(x, y, vx, vy, vz, ax, ay, az, tag)              
                  ELSE
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_RIGHT(x, y, vx, vy, vz, tag)
                  END IF
@@ -922,8 +1009,8 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
         IF (N_e_to_receive.GT.0) THEN
 !print '("Process ",i4," >> D-4")', Rank_horizontal
 ! receive particles from neighbor above
-           ALLOCATE(rbufer(1:N_e_to_receive*6), STAT=ALLOC_ERR)
-           CALL MPI_RECV(rbufer, N_e_to_receive*6, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal_above, COMM_HORIZONTAL, stattus, ierr)     
+           ALLOCATE(rbufer(1:N_e_to_receive * 9), STAT=ALLOC_ERR)
+           CALL MPI_RECV(rbufer, N_e_to_receive*9, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal_above, COMM_HORIZONTAL, stattus, ierr)     
 !print '("Process ",i4," >> D-5")', Rank_horizontal
 ! process the received particles
            pos=1
@@ -933,19 +1020,22 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
               vx  = rbufer(pos+2)
               vy  = rbufer(pos+3)
               vz  = rbufer(pos+4)
-              tag = INT(rbufer(pos+5))
-              pos = pos+6
+              ax  = rbufer(pos+5)
+              ay  = rbufer(pos+6)
+              az  = rbufer(pos+7)
+              tag = INT(rbufer(pos+8))
+              pos = pos + 9
               IF ((x.GE.c_X_area_min).AND.(x.LE.c_X_area_max)) THEN
-                 CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+                 CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
               ELSE IF (x.LT.c_X_area_min) THEN
                  IF (Rank_of_master_left.GE.0) THEN
-                    CALL ADD_ELECTRON_TO_SEND_LEFT(x, y, vx, vy, vz, tag)              
+                    CALL ADD_ELECTRON_TO_SEND_LEFT(x, y, vx, vy, vz, ax, ay, az, tag)              
                  ELSE
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_LEFT(x, y, vx, vy, vz, tag)
                  END IF
               ELSE IF (x.GT.c_X_area_max) THEN
                  IF (Rank_of_master_right.GE.0) THEN
-                    CALL ADD_ELECTRON_TO_SEND_RIGHT(x, y, vx, vy, vz, tag)              
+                    CALL ADD_ELECTRON_TO_SEND_RIGHT(x, y, vx, vy, vz, ax, ay, az, tag)              
                  ELSE
                     CALL PROCESS_ELECTRON_COLL_WITH_BOUNDARY_RIGHT(x, y, vx, vy, vz, tag)
                  END IF
@@ -969,7 +1059,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
 ! otherwise
 ! prepare array to send to neighbor above
            IF (.NOT.ALLOCATED(rbufer)) THEN
-              ALLOCATE(rbufer(1:N_e_to_send_above*6), STAT=ALLOC_ERR)
+              ALLOCATE(rbufer(1:N_e_to_send_above * 9), STAT=ALLOC_ERR)
               pos=1
               DO i = 1, N_e_to_send_above
                  rbufer(pos)   = electron_to_send_above(i)%X
@@ -977,12 +1067,15 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
                  rbufer(pos+2) = electron_to_send_above(i)%VX
                  rbufer(pos+3) = electron_to_send_above(i)%VY
                  rbufer(pos+4) = electron_to_send_above(i)%VZ
-                 rbufer(pos+5) = DBLE(electron_to_send_above(i)%tag)
-                 pos = pos+6
+                 rbufer(pos+5) = electron_to_send_above(i)%AX
+                 rbufer(pos+6) = electron_to_send_above(i)%AY
+                 rbufer(pos+7) = electron_to_send_above(i)%AZ
+                 rbufer(pos+8) = DBLE(electron_to_send_above(i)%tag)
+                 pos = pos + 9
               END DO
            END IF
 ! send particles to neighbor above
-           CALL MPI_SEND(rbufer, N_e_to_send_above*6, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, request, ierr)     
+           CALL MPI_SEND(rbufer, N_e_to_send_above*9, MPI_DOUBLE_PRECISION, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, request, ierr)     
 ! clear the counter
            N_e_to_send_above = 0
            DEALLOCATE(rbufer, STAT=ALLOC_ERR)
@@ -1002,7 +1095,7 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
 ! otherwise
 ! prepare array to send to neighbor below
            IF (.NOT.ALLOCATED(rbufer)) THEN
-              ALLOCATE(rbufer(1:N_e_to_send_below*6), STAT=ALLOC_ERR)
+              ALLOCATE(rbufer(1:N_e_to_send_below * 9), STAT=ALLOC_ERR)
               pos=1
               DO i = 1, N_e_to_send_below
                  rbufer(pos)   = electron_to_send_below(i)%X
@@ -1010,12 +1103,15 @@ SUBROUTINE EXCHANGE_ELECTRONS_WITH_ABOVE_BELOW_NEIGHBOURS
                  rbufer(pos+2) = electron_to_send_below(i)%VX
                  rbufer(pos+3) = electron_to_send_below(i)%VY
                  rbufer(pos+4) = electron_to_send_below(i)%VZ
-                 rbufer(pos+5) = DBLE(electron_to_send_below(i)%tag)
-                 pos = pos+6
+                 rbufer(pos+5) = electron_to_send_below(i)%AX
+                 rbufer(pos+6) = electron_to_send_below(i)%AY
+                 rbufer(pos+7) = electron_to_send_below(i)%AZ
+                 rbufer(pos+8) = DBLE(electron_to_send_below(i)%tag)
+                 pos = pos + 9
               END DO
            END IF
 ! send particles to neighbor below
-           CALL MPI_SEND(rbufer, N_e_to_send_below*6, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr)     
+           CALL MPI_SEND(rbufer, N_e_to_send_below*9, MPI_DOUBLE_PRECISION, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr)     
 ! clear the counter
            N_e_to_send_below = 0
            DEALLOCATE(rbufer, STAT=ALLOC_ERR)

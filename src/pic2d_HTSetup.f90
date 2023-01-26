@@ -353,7 +353,7 @@ SUBROUTINE PERFORM_IONIZATION_HT_SETUP
   INTEGER add_N_i_ionize(1:N_spec)
   INTEGER s, n
   INTEGER tag
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay, az
 
   IF (.NOT.ht_use_ionization_source) RETURN
 
@@ -390,7 +390,11 @@ SUBROUTINE PERFORM_IONIZATION_HT_SETUP
         vy = vy * factor_convert_vion_e
         vz = vz * factor_convert_vion_e
 
-        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+        ax = 0.0_8
+        ay = 0.0_8
+        az = 0.0_8
+
+        CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
 
         CALL GetMaxwellVelocity(vx)
         CALL GetMaxwellVelocity(vy)
@@ -486,7 +490,7 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_HT_SETUP
   INTEGER add_N_e_to_emit
   INTEGER n, m, nwo, N_plus, N_minus
 
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay, az
   INTEGER tag
 
   IF (.NOT.ht_use_e_emission_from_cathode) RETURN
@@ -600,7 +604,11 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_HT_SETUP
 
      tag = 0
 
-     CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+     ax = 0.0_8
+     ay = 0.0_8
+     az = 0.0_8
+
+     CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
   END DO
 
 !print '("process ",i4," of cluster ",i4," emitted ",i5," electrons from top boundary")', Rank_of_process, particle_master, add_N_e_to_emit
@@ -646,7 +654,7 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_HT_SETUP_ZERO_GRAD_F
   REAL(8), ALLOCATABLE :: temp_c_rho_band(:)
   INTEGER n3
 
-  REAL(8) x, y, vx, vy, vz
+  REAL(8) x, y, vx, vy, vz, ax, ay, az
   INTEGER tag
 
   REAL(8) ax_ip1, ax_i
@@ -827,7 +835,11 @@ print '("      Process ",i4," will emit ",i7," electron macroparticles")', Rank_
 
      tag = 0
 
-     CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+     ax = 0.0_8
+     ay = 0.0_8
+     az = 0.0_8
+
+     CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, ax, ay, az, tag)
   END DO
 
 ! collect densities from all processes in a cluster

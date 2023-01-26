@@ -8,7 +8,7 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
   USE ClusterAndItsBoundaries
   USE BlockAndItsBoundaries
   USE IonParticles, ONLY : N_spec
-  USE Checkpoints, ONLY : use_checkpoint
+  USE Checkpoints, ONLY : use_checkpoint, Save_probes_data_T_cntr_check, N_of_saved_records_check
 
   IMPLICIT NONE
 
@@ -22,8 +22,6 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
 
   CHARACTER (1) buf
 
-  INTEGER Save_probes_data_step_rff
-
   INTEGER N_of_given_probes
   INTEGER n, s, k, i
   INTEGER IOS
@@ -35,8 +33,7 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
 
   INTEGER npa, npc, npb  ! used to denote index of probe global (a=all), in cluster (c), and in block (b)
 
-  REAL(8) start_time_ns
-  REAL(8) time_ns
+  REAL r_dummy
 
   CHARACTER(34) clusterprobes_filename    ! _probelocs_cluster_NNNNN_NNNNN.dat
                                           ! ----x----I----x----I----x----I----
@@ -60,18 +57,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
   INQUIRE (FILE = 'init_probes.dat', EXIST = exists)
 
   IF (.NOT.exists) THEN
-     IF (Rank_of_process.EQ.0) PRINT '(2x,"### init_probes.dat not found, time dependencies in probes will not be created ###")'
-     N_of_probes = 0
-     N_of_probes_cluster = 0
-     N_of_probes_block = 0
-     Save_probes_e_data_T_cntr = 0
-     Save_probes_i_data_T_cntr = N_subcycles-1
-     Save_probes_e_data_step = 1
-     Save_probes_i_data_step = N_subcycles
-     Save_probes_data_step = 1   ! have to keep this for INITIATE_SNAPSHOT
-     text_output_counter = 0  ! obsolete values, keep them to have something to use in checkpoints
-     N_of_saved_records = 0
-     RETURN
+     PRINT '(2x,"Process ",i5," :: INITIATE_PROBE_DIAGNOSTICS : ERROR-2 : init_probes.dat not found, program terminated.")', Rank_of_process
+     CALL MPI_FINALIZE(ierr)
+     STOP
   END IF
 
   IF (Rank_of_process.EQ.0) THEN
@@ -80,15 +68,15 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
 
   OPEN (9, FILE = 'init_probes.dat')
 
-  READ (9, '(A1)') buf !Step for saving (ion timesteps if >=1, 0 means save as frequent as possible), type below
-  READ (9, *) Save_probes_data_step_rff
-  READ (9, '(A1)') buf !Start saving data at (timesteps, >=0), type below
-  READ (9, *) Save_probes_data_T_cntr_rff
-  READ (9, '(A1)') buf !Skip periods of writing between text outputs (>=0), type below
-  READ (9, *) TextOut_skip
-  READ (9, '(A1)') buf !Number of probes (off if <=0), type below
-  READ (9, *) N_of_given_probes
-  READ (9, '(A1)') buf !Probe coordinates (x/y, node numbers), type below
+  READ (9, '(A1)') buf !----dddddd--- Step for saving (timesteps, >=1)
+  READ (9, '(4x,i6)') Save_probes_data_step
+  READ (9, '(A1)') buf !---ddddddd--- Start saving data at (timesteps, >=0)
+  READ (9, '(3x,i7)') Save_probes_data_T_cntr_rff                                          !######## was Save_probes_data_T_cntr
+  READ (9, '(A1)') buf !------dddd--- Skip periods of writing between text outputs (>=0)
+  READ (9, '(6x,i4)') TextOut_skip
+  READ (9, '(A1)') buf !------dddd--- Number of probes (off if <=0)
+  READ (9, '(6x,i4)') N_of_given_probes
+  READ (9, '(A1)') buf !--ddddd--ddddd-- Probe coordinates (x/y, node numbers)
 
   IF (N_of_given_probes.GT.Max_N_of_probes) THEN
      IF (Rank_of_process.EQ.0) THEN
@@ -98,7 +86,7 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
   END IF
      
   DO n = 1, N_of_given_probes
-     READ (9, *, IOSTAT=IOS) temp_pos(1,n), temp_pos(2,n)
+     READ (9, '(2x,i5,2x,i5)', IOSTAT=IOS) temp_pos(1,n), temp_pos(2,n)
      IF (IOS.NE.0) THEN
         PRINT '(2x,"Process ",i5," :: INITIATE_PROBE_DIAGNOSTICS : ERROR-1 : while reading file init_probes.dat : wrong coordinates of probe ",i4," program terminated.")', Rank_of_process, n
         CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
@@ -107,37 +95,15 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
 
   CLOSE (9, STATUS = 'KEEP')
 
-  IF (Save_probes_data_step_rff.LE.0) THEN
-     Save_probes_e_data_step = 1
-     Save_probes_i_data_step = N_subcycles
-
-     Save_probes_e_data_T_cntr = 0
-     Save_probes_i_data_T_cntr = N_subcycles-1
-  ELSE
-     Save_probes_e_data_step = Save_probes_data_step_rff * N_subcycles
-     Save_probes_i_data_step = Save_probes_e_data_step
-
-     Save_probes_e_data_T_cntr = N_subcycles/2
-     Save_probes_i_data_T_cntr = N_subcycles-1
-  END IF
-
-  Save_probes_data_step = Save_probes_e_data_step   ! have to keep this for INITIATE_SNAPSHOT
-
-  text_output_counter = 0  ! obsolete values, keep them to have something to use in checkpoints
+  text_output_counter = 0
   N_of_saved_records = 0
+  Save_probes_data_T_cntr = Save_probes_data_T_cntr_rff   
 
-  Save_probes_data_T_cntr_rff = (MAX(0, Save_probes_data_T_cntr_rff) / N_subcycles) * N_subcycles    ! have to keep this for INITIATE_SNAPSHOT
-
-  Save_probes_e_data_T_cntr = Save_probes_e_data_T_cntr + Save_probes_data_T_cntr_rff
-  Save_probes_i_data_T_cntr = Save_probes_i_data_T_cntr + Save_probes_data_T_cntr_rff
-
-  DO WHILE (Save_probes_e_data_T_cntr.LT.Start_T_cntr)
-     Save_probes_e_data_T_cntr = Save_probes_e_data_T_cntr + Save_probes_e_data_step
-  END DO
-
-  DO WHILE (Save_probes_i_data_T_cntr.LT.Start_T_cntr)
-     Save_probes_i_data_T_cntr = Save_probes_i_data_T_cntr + Save_probes_i_data_step
-  END DO
+! overwrite if checkpoint is used to initialize the system
+  IF (use_checkpoint.EQ.1) THEN
+     Save_probes_data_T_cntr = Save_probes_data_T_cntr_check
+     N_of_saved_records = N_of_saved_records_check
+  END IF
 
 ! there are two situations:
 ! N_of_given_probes<=0 : no any time dependencies will be created at all
@@ -244,12 +210,6 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
 
      PRINT '("Cluster ",i5," : has ",i3," probes")', Rank_of_process, N_of_probes_cluster
 
-     IF (Rank_horizontal.EQ.0) THEN
-        ALLOCATE(probe_JXsum(1:N_of_probes), STAT = ALLOC_ERR)
-        ALLOCATE(probe_JYsum(1:N_of_probes), STAT = ALLOC_ERR)
-        ALLOCATE(probe_JZsum(1:N_of_probes), STAT = ALLOC_ERR)
-     END IF
-
      IF (N_of_probes_cluster.GT.0) THEN
 
         ALLOCATE(List_of_probes_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
@@ -258,39 +218,23 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
 
         ALLOCATE(probe_Ne_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
 
-        ALLOCATE(probe_VXe_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
-        ALLOCATE(probe_VYe_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
-        ALLOCATE(probe_VZe_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
-
-        ALLOCATE(probe_VXVYe_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
-        ALLOCATE(probe_VXVZe_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
-        ALLOCATE(probe_VYVZe_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
+        ALLOCATE(probe_JXe_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
+        ALLOCATE(probe_JYe_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
+        ALLOCATE(probe_JZe_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
 
         ALLOCATE(probe_WXe_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
         ALLOCATE(probe_WYe_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
         ALLOCATE(probe_WZe_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
 
-        ALLOCATE(probe_QXe_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
-        ALLOCATE(probe_QYe_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
-        ALLOCATE(probe_QZe_cluster(1:N_of_probes_cluster), STAT = ALLOC_ERR)
-
         ALLOCATE(probe_Ni_cluster(1:N_of_probes_cluster,1:N_spec), STAT = ALLOC_ERR)
 
-        ALLOCATE(probe_VXi_cluster(1:N_of_probes_cluster,1:N_spec), STAT = ALLOC_ERR)
-        ALLOCATE(probe_VYi_cluster(1:N_of_probes_cluster,1:N_spec), STAT = ALLOC_ERR)
-        ALLOCATE(probe_VZi_cluster(1:N_of_probes_cluster,1:N_spec), STAT = ALLOC_ERR)
-
-        ALLOCATE(probe_VXVYi_cluster(1:N_of_probes_cluster,1:N_spec), STAT = ALLOC_ERR)
-        ALLOCATE(probe_VXVZi_cluster(1:N_of_probes_cluster,1:N_spec), STAT = ALLOC_ERR)
-        ALLOCATE(probe_VYVZi_cluster(1:N_of_probes_cluster,1:N_spec), STAT = ALLOC_ERR)
+        ALLOCATE(probe_JXi_cluster(1:N_of_probes_cluster,1:N_spec), STAT = ALLOC_ERR)
+        ALLOCATE(probe_JYi_cluster(1:N_of_probes_cluster,1:N_spec), STAT = ALLOC_ERR)
+        ALLOCATE(probe_JZi_cluster(1:N_of_probes_cluster,1:N_spec), STAT = ALLOC_ERR)
 
         ALLOCATE(probe_WXi_cluster(1:N_of_probes_cluster,1:N_spec), STAT = ALLOC_ERR)
         ALLOCATE(probe_WYi_cluster(1:N_of_probes_cluster,1:N_spec), STAT = ALLOC_ERR)
         ALLOCATE(probe_WZi_cluster(1:N_of_probes_cluster,1:N_spec), STAT = ALLOC_ERR)
-
-        ALLOCATE(probe_QXi_cluster(1:N_of_probes_cluster,1:N_spec), STAT = ALLOC_ERR)
-        ALLOCATE(probe_QYi_cluster(1:N_of_probes_cluster,1:N_spec), STAT = ALLOC_ERR)
-        ALLOCATE(probe_QZi_cluster(1:N_of_probes_cluster,1:N_spec), STAT = ALLOC_ERR)
 
         npc = 0
         DO npa = 1, N_of_probes
@@ -512,18 +456,13 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
         IF (use_checkpoint.EQ.1) THEN
 ! start from checkpoint, must trim the time dependences
 
-           start_time_ns = (DBLE(Start_T_cntr) - 0.5_8) * (delta_t_s * 1.0d9)  ! -0.5 to avoid uncertainty due to possible round off error
-
 ! electric field EX 
            INQUIRE (FILE = 'dim_EX_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_EX_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -532,12 +471,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_EY_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_EY_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -546,12 +482,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_F_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_F_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -560,12 +493,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_JXsum_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_JXsum_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -574,12 +504,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_JYsum_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_JYsum_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -588,12 +515,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_JZsum_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_JZsum_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -602,12 +526,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_Ne_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_Ne_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -616,12 +537,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_VXe_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_VXe_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -630,12 +548,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_VYe_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_VYe_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -644,12 +559,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_VZe_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_VZe_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -658,12 +570,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_JXe_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_JXe_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -672,12 +581,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_JYe_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_JYe_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -686,12 +592,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_JZe_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_JZe_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -700,12 +603,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_WXe_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_WXe_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -714,12 +614,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_WYe_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_WYe_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -728,26 +625,20 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_WZe_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_WZe_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
 
-! electron temperature TXe
+! electron temperature TXe 
            INQUIRE (FILE = 'dim_TXe_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_TXe_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -756,12 +647,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_TYe_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_TYe_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -770,48 +658,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            INQUIRE (FILE = 'dim_TZe_vst.dat', EXIST = exists)
            IF (exists) THEN                                                       
               OPEN (21, FILE = 'dim_TZe_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
+              DO i = 1, N_of_saved_records
+                 READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
               END DO
-              BACKSPACE(21)
-              ENDFILE 21       
-              CLOSE (21, STATUS = 'KEEP')        
-           END IF
-
-! electron heat flow QXe
-           INQUIRE (FILE = 'dim_QXe_vst.dat', EXIST = exists)
-           IF (exists) THEN                                                       
-              OPEN (21, FILE = 'dim_QXe_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
-              END DO
-              BACKSPACE(21)
-              ENDFILE 21       
-              CLOSE (21, STATUS = 'KEEP')        
-           END IF
-
-! electron heat flow QYe
-           INQUIRE (FILE = 'dim_QYe_vst.dat', EXIST = exists)
-           IF (exists) THEN                                                       
-              OPEN (21, FILE = 'dim_QYe_vst.dat', STATUS = 'OLD')          
-              ENDFILE 21       
-              CLOSE (21, STATUS = 'KEEP')        
-           END IF
-
-! electron heat flow QZe
-           INQUIRE (FILE = 'dim_QZe_vst.dat', EXIST = exists)
-           IF (exists) THEN                                                       
-              OPEN (21, FILE = 'dim_QZe_vst.dat', STATUS = 'OLD')          
-              DO
-                 READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                 IF (ios.NE.0) EXIT
-                 IF (time_ns.GE.start_time_ns) EXIT
-              END DO
-              BACKSPACE(21)
               ENDFILE 21       
               CLOSE (21, STATUS = 'KEEP')        
            END IF
@@ -825,12 +674,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
               INQUIRE (FILE = Nis_filename, EXIST = exists)
               IF (exists) THEN                                                       
                  OPEN (21, FILE = Nis_filename, STATUS = 'OLD')          
-                 DO
-                    READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                    IF (ios.NE.0) EXIT
-                    IF (time_ns.GE.start_time_ns) EXIT
+                 DO i = 1, N_of_saved_records
+                    READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
                  END DO
-                 BACKSPACE(21)
                  ENDFILE 21       
                  CLOSE (21, STATUS = 'KEEP')        
               END IF
@@ -841,12 +687,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
               INQUIRE (FILE = NNis_filename, EXIST = exists)
               IF (exists) THEN                                                       
                  OPEN (21, FILE = NNis_filename, STATUS = 'OLD')          
-                 DO
-                    READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                    IF (ios.NE.0) EXIT
-                    IF (time_ns.GE.start_time_ns) EXIT
+                 DO i = 1, N_of_saved_records
+                    READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
                  END DO
-                 BACKSPACE(21)
                  ENDFILE 21       
                  CLOSE (21, STATUS = 'KEEP')        
               END IF
@@ -857,12 +700,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
               INQUIRE (FILE = NNis_filename, EXIST = exists)
               IF (exists) THEN                                                       
                  OPEN (21, FILE = NNis_filename, STATUS = 'OLD')          
-                 DO
-                    READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                    IF (ios.NE.0) EXIT
-                    IF (time_ns.GE.start_time_ns) EXIT
+                 DO i = 1, N_of_saved_records
+                    READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
                  END DO
-                 BACKSPACE(21)
                  ENDFILE 21       
                  CLOSE (21, STATUS = 'KEEP')        
               END IF
@@ -873,12 +713,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
               INQUIRE (FILE = NNis_filename, EXIST = exists)
               IF (exists) THEN                                                       
                  OPEN (21, FILE = NNis_filename, STATUS = 'OLD')          
-                 DO
-                    READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                    IF (ios.NE.0) EXIT
-                    IF (time_ns.GE.start_time_ns) EXIT
+                 DO i = 1, N_of_saved_records
+                    READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
                  END DO
-                 BACKSPACE(21)
                  ENDFILE 21       
                  CLOSE (21, STATUS = 'KEEP')        
               END IF
@@ -889,12 +726,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
               INQUIRE (FILE = NNis_filename, EXIST = exists)
               IF (exists) THEN                                                       
                  OPEN (21, FILE = NNis_filename, STATUS = 'OLD')          
-                 DO
-                    READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                    IF (ios.NE.0) EXIT
-                    IF (time_ns.GE.start_time_ns) EXIT
+                 DO i = 1, N_of_saved_records
+                    READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
                  END DO
-                 BACKSPACE(21)
                  ENDFILE 21       
                  CLOSE (21, STATUS = 'KEEP')        
               END IF
@@ -905,12 +739,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
               INQUIRE (FILE = NNis_filename, EXIST = exists)
               IF (exists) THEN                                                       
                  OPEN (21, FILE = NNis_filename, STATUS = 'OLD')          
-                 DO
-                    READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                    IF (ios.NE.0) EXIT
-                    IF (time_ns.GE.start_time_ns) EXIT
+                 DO i = 1, N_of_saved_records
+                    READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
                  END DO
-                 BACKSPACE(21)
                  ENDFILE 21       
                  CLOSE (21, STATUS = 'KEEP')        
               END IF
@@ -921,12 +752,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
               INQUIRE (FILE = NNis_filename, EXIST = exists)
               IF (exists) THEN                                                       
                  OPEN (21, FILE = NNis_filename, STATUS = 'OLD')          
-                 DO
-                    READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                    IF (ios.NE.0) EXIT
-                    IF (time_ns.GE.start_time_ns) EXIT
+                 DO i = 1, N_of_saved_records
+                    READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
                  END DO
-                 BACKSPACE(21)
                  ENDFILE 21       
                  CLOSE (21, STATUS = 'KEEP')        
               END IF
@@ -937,12 +765,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
               INQUIRE (FILE = NNis_filename, EXIST = exists)
               IF (exists) THEN                                                       
                  OPEN (21, FILE = NNis_filename, STATUS = 'OLD')          
-                 DO
-                    READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                    IF (ios.NE.0) EXIT
-                    IF (time_ns.GE.start_time_ns) EXIT
+                 DO i = 1, N_of_saved_records
+                    READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
                  END DO
-                 BACKSPACE(21)
                  ENDFILE 21       
                  CLOSE (21, STATUS = 'KEEP')        
               END IF
@@ -953,12 +778,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
               INQUIRE (FILE = NNis_filename, EXIST = exists)
               IF (exists) THEN                                                       
                  OPEN (21, FILE = NNis_filename, STATUS = 'OLD')          
-                 DO
-                    READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                    IF (ios.NE.0) EXIT
-                    IF (time_ns.GE.start_time_ns) EXIT
+                 DO i = 1, N_of_saved_records
+                    READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
                  END DO
-                 BACKSPACE(21)
                  ENDFILE 21       
                  CLOSE (21, STATUS = 'KEEP')        
               END IF
@@ -969,12 +791,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
               INQUIRE (FILE = NNis_filename, EXIST = exists)
               IF (exists) THEN                                                       
                  OPEN (21, FILE = NNis_filename, STATUS = 'OLD')          
-                 DO
-                    READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                    IF (ios.NE.0) EXIT
-                    IF (time_ns.GE.start_time_ns) EXIT
+                 DO i = 1, N_of_saved_records
+                    READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
                  END DO
-                 BACKSPACE(21)
                  ENDFILE 21       
                  CLOSE (21, STATUS = 'KEEP')        
               END IF
@@ -985,12 +804,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
               INQUIRE (FILE = NNis_filename, EXIST = exists)
               IF (exists) THEN                                                       
                  OPEN (21, FILE = NNis_filename, STATUS = 'OLD')          
-                 DO
-                    READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                    IF (ios.NE.0) EXIT
-                    IF (time_ns.GE.start_time_ns) EXIT
+                 DO i = 1, N_of_saved_records
+                    READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
                  END DO
-                 BACKSPACE(21)
                  ENDFILE 21       
                  CLOSE (21, STATUS = 'KEEP')        
               END IF
@@ -1001,12 +817,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
               INQUIRE (FILE = NNis_filename, EXIST = exists)
               IF (exists) THEN                                                       
                  OPEN (21, FILE = NNis_filename, STATUS = 'OLD')          
-                 DO
-                    READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                    IF (ios.NE.0) EXIT
-                    IF (time_ns.GE.start_time_ns) EXIT
+                 DO i = 1, N_of_saved_records
+                    READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
                  END DO
-                 BACKSPACE(21)
                  ENDFILE 21       
                  CLOSE (21, STATUS = 'KEEP')        
               END IF
@@ -1017,60 +830,9 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
               INQUIRE (FILE = NNis_filename, EXIST = exists)
               IF (exists) THEN                                                       
                  OPEN (21, FILE = NNis_filename, STATUS = 'OLD')          
-                 DO
-                    READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                    IF (ios.NE.0) EXIT
-                    IF (time_ns.GE.start_time_ns) EXIT
+                 DO i = 1, N_of_saved_records
+                    READ (21, '(2x,f14.6,100(1x,e14.7))') r_dummy
                  END DO
-                 BACKSPACE(21)
-                 ENDFILE 21       
-                 CLOSE (21, STATUS = 'KEEP')        
-              END IF
-
-! ion heat flow QX
-              NNis_filename = 'dim_QXi_S_vst.dat'
-              NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-              INQUIRE (FILE = NNis_filename, EXIST = exists)
-              IF (exists) THEN                                                       
-                 OPEN (21, FILE = NNis_filename, STATUS = 'OLD')          
-                 DO
-                    READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                    IF (ios.NE.0) EXIT
-                    IF (time_ns.GE.start_time_ns) EXIT
-                 END DO
-                 BACKSPACE(21)
-                 ENDFILE 21       
-                 CLOSE (21, STATUS = 'KEEP')        
-              END IF
-
-! ion heat flow QY
-              NNis_filename = 'dim_QYi_S_vst.dat'
-              NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-              INQUIRE (FILE = NNis_filename, EXIST = exists)
-              IF (exists) THEN                                                       
-                 OPEN (21, FILE = NNis_filename, STATUS = 'OLD')          
-                 DO
-                    READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                    IF (ios.NE.0) EXIT
-                    IF (time_ns.GE.start_time_ns) EXIT
-                 END DO
-                 BACKSPACE(21)
-                 ENDFILE 21       
-                 CLOSE (21, STATUS = 'KEEP')        
-              END IF
-
-! ion heat flow QZ
-              NNis_filename = 'dim_QZi_S_vst.dat'
-              NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-              INQUIRE (FILE = NNis_filename, EXIST = exists)
-              IF (exists) THEN                                                       
-                 OPEN (21, FILE = NNis_filename, STATUS = 'OLD')          
-                 DO
-                    READ (21, '(1x,f15.6,100(1x,e14.7))', iostat = ios) time_ns
-                    IF (ios.NE.0) EXIT
-                    IF (time_ns.GE.start_time_ns) EXIT
-                 END DO
-                 BACKSPACE(21)
                  ENDFILE 21       
                  CLOSE (21, STATUS = 'KEEP')        
               END IF
@@ -1156,18 +918,6 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
            OPEN  (21, FILE = 'dim_TZe_vst.dat', STATUS = 'REPLACE')          
            CLOSE (21, STATUS = 'KEEP')
 
-! electron heat flow QXe 
-           OPEN  (21, FILE = 'dim_QXe_vst.dat', STATUS = 'REPLACE')          
-           CLOSE (21, STATUS = 'KEEP')
-
-! electron heat flow QYe 
-           OPEN  (21, FILE = 'dim_QYe_vst.dat', STATUS = 'REPLACE')          
-           CLOSE (21, STATUS = 'KEEP')
-
-! electron heat flow QZe 
-           OPEN  (21, FILE = 'dim_QZe_vst.dat', STATUS = 'REPLACE')          
-           CLOSE (21, STATUS = 'KEEP')
-
 ! ion species data
            DO s = 1, N_spec
 
@@ -1249,24 +999,6 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
               OPEN  (21, FILE = NNis_filename, STATUS = 'REPLACE')          
               CLOSE (21, STATUS = 'KEEP')
 
-! ion heat flow QX
-              NNis_filename = 'dim_QXi_S_vst.dat'
-              NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-              OPEN  (21, FILE = NNis_filename, STATUS = 'REPLACE')          
-              CLOSE (21, STATUS = 'KEEP')
-
-! ion heat flow QY
-              NNis_filename = 'dim_QYi_S_vst.dat'
-              NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-              OPEN  (21, FILE = NNis_filename, STATUS = 'REPLACE')          
-              CLOSE (21, STATUS = 'KEEP')
-
-! ion heat flow QZ
-              NNis_filename = 'dim_QZi_S_vst.dat'
-              NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-              OPEN  (21, FILE = NNis_filename, STATUS = 'REPLACE')          
-              CLOSE (21, STATUS = 'KEEP')
-
            END DO
         END IF
 
@@ -1293,43 +1025,15 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
 
 END SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
 
-!-------------------------------------------------------
-!
-SUBROUTINE DO_PROBE_DIAGNOSTICS
-
-  USE CurrentProblemValues, ONLY : T_cntr
-  USE Diagnostics, ONLY : N_of_probes, Save_probes_e_data_T_cntr, Save_probes_e_data_step, Save_probes_i_data_T_cntr, Save_probes_i_data_step
-
-  IMPLICIT NONE
-
-  INCLUDE 'mpif.h'
-
-  INTEGER ierr
-
-  IF (N_of_probes.LE.0) RETURN
-
-  IF (T_cntr.EQ.Save_probes_e_data_T_cntr) THEN
-     CALL DO_PROBE_DIAGNOSTICS_e_DATA
-     Save_probes_e_data_T_cntr = Save_probes_e_data_T_cntr + Save_probes_e_data_step 
-  END IF
-
-  CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
-
-  IF (T_cntr.EQ.Save_probes_i_data_T_cntr) THEN
-     CALL DO_PROBE_DIAGNOSTICS_i_DATA
-     Save_probes_i_data_T_cntr = Save_probes_i_data_T_cntr + Save_probes_i_data_step 
-  END IF
-
-END SUBROUTINE DO_PROBE_DIAGNOSTICS
-
 !------------------------------
 !
-SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
+SUBROUTINE DO_PROBE_DIAGNOSTICS(ions_moved)
     
   USE ParallelOperationValues
   USE Diagnostics
   USE CurrentProblemValues
   USE ClusterAndItsBoundaries
+  USE IonParticles, ONLY : N_spec, Qs, Ms
 
   IMPLICIT NONE  
 
@@ -1339,17 +1043,23 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
   INTEGER stattus(MPI_STATUS_SIZE)
   INTEGER request
 
+  LOGICAL, INTENT(INOUT) :: ions_moved
+
   INTEGER bufsize
   REAL, ALLOCATABLE :: rbufer(:)
   INTEGER ALLOC_ERR
   INTEGER pos1, pos2
 
-  INTEGER k, n, i, j
+  INTEGER s, k, n, i, j
   INTEGER npa, npb, npc
 
   REAL, ALLOCATABLE :: probe_EX(:)
   REAL, ALLOCATABLE :: probe_EY(:)
   REAL, ALLOCATABLE :: probe_F(:)
+
+  REAL, ALLOCATABLE :: probe_JXsum(:)
+  REAL, ALLOCATABLE :: probe_JYsum(:)
+  REAL, ALLOCATABLE :: probe_JZsum(:)
 
   REAL, ALLOCATABLE :: probe_Ne(:)
 
@@ -1365,25 +1075,66 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
   REAL, ALLOCATABLE :: probe_VYe(:)
   REAL, ALLOCATABLE :: probe_VZe(:)
 
-  REAL, ALLOCATABLE :: probe_VXVYe(:)
-  REAL, ALLOCATABLE :: probe_VXVZe(:)
-  REAL, ALLOCATABLE :: probe_VYVZe(:)
-
   REAL, ALLOCATABLE :: probe_TXe(:)
   REAL, ALLOCATABLE :: probe_TYe(:)
   REAL, ALLOCATABLE :: probe_TZe(:)
 
-  REAL, ALLOCATABLE :: probe_QXe(:)
-  REAL, ALLOCATABLE :: probe_QYe(:)
-  REAL, ALLOCATABLE :: probe_QZe(:)
+  REAL, ALLOCATABLE :: probe_Ni(:,:)
+
+  REAL, ALLOCATABLE :: probe_JXi(:,:)
+  REAL, ALLOCATABLE :: probe_JYi(:,:)
+  REAL, ALLOCATABLE :: probe_JZi(:,:)
+
+  REAL, ALLOCATABLE :: probe_WXi(:,:)
+  REAL, ALLOCATABLE :: probe_WYi(:,:)
+  REAL, ALLOCATABLE :: probe_WZi(:,:)
+
+  REAL, ALLOCATABLE :: probe_VXi(:,:)
+  REAL, ALLOCATABLE :: probe_VYi(:,:)
+  REAL, ALLOCATABLE :: probe_VZi(:,:)
+
+  REAL, ALLOCATABLE :: probe_TXi(:,:)
+  REAL, ALLOCATABLE :: probe_TYi(:,:)
+  REAL, ALLOCATABLE :: probe_TZi(:,:)
 
   INTEGER recsize
 
-  REAL rvx, rvy, rvz
-  REAL rvx2, rvy2, rvz2
-  REAL rtemp, inv_N
-
   REAL time_ns
+
+  CHARACTER(16) Nis_filename   ! dim_Ni_S_vst.dat
+                               ! ----*----I----*--
+  CHARACTER(17) NNis_filename  ! dim_VXi_S_vst.dat
+
+  INTERFACE
+     function convert_int_to_txt_string(int_number, length_of_string)
+       character*(length_of_string) convert_int_to_txt_string
+       integer int_number
+       integer length_of_string
+     end function convert_int_to_txt_string
+  END INTERFACE
+
+! exit if the current time layer is not assigned for the diagnostic output 
+  IF (T_cntr.NE.Save_probes_data_T_cntr) RETURN
+
+! allows to update ion moments for the next record
+  ions_moved = .FALSE.
+
+! modify counter to skip extra diagnostics periods between two text outputs
+  text_output_counter = text_output_counter + 1
+
+! this counter is saved in checkpoints to be able to trim the time dependence data files
+  N_of_saved_records = N_of_saved_records + 1
+
+! perform text output
+  IF (text_output_counter.GT.TextOut_skip) THEN
+!     CALL DoTextOutput
+     text_output_counter = 0
+  END IF
+
+! modify the diagnostics time for future use
+  Save_probes_data_T_cntr = Save_probes_data_T_cntr + Save_probes_data_step 
+
+  IF (N_of_probes.LE.0) RETURN
 
 ! collect potential from field calculators (for systems which do not use FFT solver) ---------------------------------------------
 
@@ -1430,6 +1181,10 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
      ALLOCATE(probe_EY(1:N_of_probes), STAT = ALLOC_ERR)
      ALLOCATE(probe_F( 1:N_of_probes), STAT = ALLOC_ERR)
 
+     ALLOCATE(probe_JXsum(1:N_of_probes), STAT = ALLOC_ERR)
+     ALLOCATE(probe_JYsum(1:N_of_probes), STAT = ALLOC_ERR)
+     ALLOCATE(probe_JZsum(1:N_of_probes), STAT = ALLOC_ERR)
+
      ALLOCATE(probe_Ne(1:N_of_probes), STAT = ALLOC_ERR)
 
      ALLOCATE(probe_JXe(1:N_of_probes), STAT = ALLOC_ERR)
@@ -1440,10 +1195,6 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
      ALLOCATE(probe_VYe(1:N_of_probes), STAT = ALLOC_ERR)
      ALLOCATE(probe_VZe(1:N_of_probes), STAT = ALLOC_ERR)
 
-     ALLOCATE(probe_VXVYe(1:N_of_probes), STAT = ALLOC_ERR)
-     ALLOCATE(probe_VXVZe(1:N_of_probes), STAT = ALLOC_ERR)
-     ALLOCATE(probe_VYVZe(1:N_of_probes), STAT = ALLOC_ERR)
-
      ALLOCATE(probe_WXe(1:N_of_probes), STAT = ALLOC_ERR)
      ALLOCATE(probe_WYe(1:N_of_probes), STAT = ALLOC_ERR)
      ALLOCATE(probe_WZe(1:N_of_probes), STAT = ALLOC_ERR)
@@ -1452,60 +1203,69 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
      ALLOCATE(probe_TYe(1:N_of_probes), STAT = ALLOC_ERR)
      ALLOCATE(probe_TZe(1:N_of_probes), STAT = ALLOC_ERR)
 
-     ALLOCATE(probe_QXe(1:N_of_probes), STAT = ALLOC_ERR)
-     ALLOCATE(probe_QYe(1:N_of_probes), STAT = ALLOC_ERR)
-     ALLOCATE(probe_QZe(1:N_of_probes), STAT = ALLOC_ERR)
+     ALLOCATE(probe_Ni(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
 
-! values of moments N, V, W, V*V*, Q in probes are already calculated but are NOT synchronized in overlapping nodes
+     ALLOCATE(probe_JXi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
+     ALLOCATE(probe_JYi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
+     ALLOCATE(probe_JZi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
 
-     probe_Ne = 0.0
+     ALLOCATE(probe_VXi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
+     ALLOCATE(probe_VYi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
+     ALLOCATE(probe_VZi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
 
-     probe_VXe = 0.0
-     probe_VYe = 0.0
-     probe_VZe = 0.0
+     ALLOCATE(probe_WXi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
+     ALLOCATE(probe_WYi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
+     ALLOCATE(probe_WZi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
 
-     probe_WXe = 0.0
-     probe_WYe = 0.0
-     probe_WZe = 0.0
+     ALLOCATE(probe_TXi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
+     ALLOCATE(probe_TYi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
+     ALLOCATE(probe_TZi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
 
-     probe_VXVYe = 0.0
-     probe_VXVZe = 0.0
-     probe_VYVZe = 0.0
-
-     probe_QXe = 0.0
-     probe_QYe = 0.0
-     probe_QZe = 0.0
+     probe_Ne = 0.0   !
+     probe_JXe = 0.0  !
+     probe_JYe = 0.0  !
+     probe_JZe = 0.0  !
+     probe_WXe = 0.0  !
+     probe_WYe = 0.0  !
+     probe_WZe = 0.0  ! set zeros because these values will be accumulated (in case of probes at boundaries between clusters)
+     probe_Ni = 0.0   !
+     probe_JXi = 0.0  !
+     probe_JYi = 0.0  !
+     probe_JZi = 0.0  !
+     probe_WXi = 0.0  !
+     probe_WYi = 0.0  !
+     probe_WZi = 0.0  !
 
 ! includes its own probes (if there are any)
      DO npc = 1, N_of_probes_cluster
-
         npa = List_of_probes_cluster(npc)    ! npa = n-umber of p-robe, a-ll   npc = n-umber of p-robe in c-luster
-
         i = Probe_position(1, npa)
         j = Probe_position(2, npa)
-
         probe_EX(npa) = EX(i, j)
         probe_EY(npa) = EY(i, j)
         probe_F(npa) = probe_F_cluster(npc)
 
-        probe_Ne(npa) = probe_Ne_cluster(npc)
+        probe_Ne(npa) = probe_Ne(npa) + probe_Ne_cluster(npc)
 
-        probe_VXe(npa) = probe_VXe_cluster(npc)
-        probe_VYe(npa) = probe_VYe_cluster(npc)
-        probe_VZe(npa) = probe_VZe_cluster(npc)
+        probe_JXe(npa) = probe_JXe(npa) + probe_JXe_cluster(npc)
+        probe_JYe(npa) = probe_JYe(npa) + probe_JYe_cluster(npc)
+        probe_JZe(npa) = probe_JZe(npa) + probe_JZe_cluster(npc)
 
-        probe_WXe(npa) = probe_WXe_cluster(npc)
-        probe_WYe(npa) = probe_WYe_cluster(npc)
-        probe_WZe(npa) = probe_WZe_cluster(npc)
+        probe_WXe(npa) = probe_WXe(npa) + probe_WXe_cluster(npc)
+        probe_WYe(npa) = probe_WYe(npa) + probe_WYe_cluster(npc)
+        probe_WZe(npa) = probe_WZe(npa) + probe_WZe_cluster(npc)
 
-        probe_VXVYe(npa) = probe_VXVYe_cluster(npc)
-        probe_VXVZe(npa) = probe_VXVZe_cluster(npc)
-        probe_VYVZe(npa) = probe_VYVZe_cluster(npc)
+        DO s = 1, N_spec
+           probe_Ni(npa, s) = probe_Ni(npa, s) + probe_Ni_cluster(npc, s)
 
-        probe_QXe(npa) = probe_QXe_cluster(npc)
-        probe_QYe(npa) = probe_QYe_cluster(npc)
-        probe_QZe(npa) = probe_QZe_cluster(npc)
+           probe_JXi(npa, s) = probe_JXi(npa, s) + probe_JXi_cluster(npc, s)
+           probe_JYi(npa, s) = probe_JYi(npa, s) + probe_JYi_cluster(npc, s)
+           probe_JZi(npa, s) = probe_JZi(npa, s) + probe_JZi_cluster(npc, s)
 
+           probe_WXi(npa, s) = probe_WXi(npa, s) + probe_WXi_cluster(npc, s)
+           probe_WYi(npa, s) = probe_WYi(npa, s) + probe_WYi_cluster(npc, s)
+           probe_WZi(npa, s) = probe_WZi(npa, s) + probe_WZi_cluster(npc, s)
+        END DO
      END DO
 
 ! assemble probe data from all other clusters
@@ -1514,107 +1274,43 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
         IF (diag_cluster(n)%N_probes.LE.0) CYCLE
 
         recsize = diag_cluster(n)%N_probes
-        bufsize = (3 + 13) * recsize   !{EX,EY,F,  e::N,VX,VY,VZ,WX,WY,WZ,QX,QY,QZ,VXVY,VXVZ,VYVZ}
+        bufsize = (3 + 7 + 7 * N_spec) * recsize   !{EX,EY,F,  e::N,JX,JY,JZ,WX,WY,WZ, i::N,JX,JY,JZ,WX,WY,WZ}
         ALLOCATE(rbufer(1:bufsize), STAT = ALLOC_ERR)
 
         CALL MPI_RECV(rbufer(1:bufsize), bufsize, MPI_REAL, n, n, COMM_HORIZONTAL, stattus, ierr)
 
-! since moments in overlapping areas are not synchronized, values in probes belonging to more than one clusters are accumulated
         DO npc = 1, recsize
            npa = diag_cluster(n)%probe_number(npc)
-
-           probe_EX(npa) = rbufer(npc)
-           probe_EY(npa) = rbufer(npc+recsize)
-           probe_F(npa)  = rbufer(npc+2*recsize)
+           probe_EX(npa) = rbufer(npc)                    ! if a probe is at a boundary between clusters, it is included in both clusters
+           probe_EY(npa) = rbufer(npc+recsize)            ! for such probes, data like EX, EY, and F are simply overwritten
+           probe_F(npa)  = rbufer(npc+2*recsize)          ! while densities, currents, and integral energies below are accumulated
 
            probe_Ne(npa) = probe_Ne(npa) + rbufer(npc+3*recsize) 
 
-           probe_VXe(npa) = probe_VXe(npa) + rbufer(npc+4*recsize)
-           probe_VYe(npa) = probe_VYe(npa) + rbufer(npc+5*recsize)
-           probe_VZe(npa) = probe_VZe(npa) + rbufer(npc+6*recsize)
+           probe_JXe(npa) = probe_JXe(npa) + rbufer(npc+4*recsize)
+           probe_JYe(npa) = probe_JYe(npa) + rbufer(npc+5*recsize)
+           probe_JZe(npa) = probe_JZe(npa) + rbufer(npc+6*recsize)
 
            probe_WXe(npa) = probe_WXe(npa) + rbufer(npc+7*recsize)
            probe_WYe(npa) = probe_WYe(npa) + rbufer(npc+8*recsize)
            probe_WZe(npa) = probe_WZe(npa) + rbufer(npc+9*recsize)
 
-           probe_QXe(npa) = probe_QXe(npa) + rbufer(npc+10*recsize)
-           probe_QYe(npa) = probe_QYe(npa) + rbufer(npc+11*recsize)
-           probe_QZe(npa) = probe_QZe(npa) + rbufer(npc+12*recsize)
+           DO s = 1, N_spec
+              probe_Ni(npa, s) = probe_Ni(npa, s) + rbufer(npc+(10+7*(s-1))*recsize)
 
-           probe_VXVYe(npa) = probe_VXVYe(npa) + rbufer(npc+13*recsize)
-           probe_VXVZe(npa) = probe_VXVZe(npa) + rbufer(npc+14*recsize)
-           probe_VYVZe(npa) = probe_VYVZe(npa) + rbufer(npc+15*recsize)
+              probe_JXi(npa, s) = probe_JXi(npa, s) + rbufer(npc+(11+7*(s-1))*recsize)
+              probe_JYi(npa, s) = probe_JYi(npa, s) + rbufer(npc+(12+7*(s-1))*recsize)
+              probe_JZi(npa, s) = probe_JZi(npa, s) + rbufer(npc+(13+7*(s-1))*recsize)
+
+              probe_WXi(npa, s) = probe_WXi(npa, s) + rbufer(npc+(14+7*(s-1))*recsize)
+              probe_WYi(npa, s) = probe_WYi(npa, s) + rbufer(npc+(15+7*(s-1))*recsize)
+              probe_WZi(npa, s) = probe_WZi(npa, s) + rbufer(npc+(16+7*(s-1))*recsize)
+           END DO 
         END DO   !###  DO npc = 1, recsize 
            
         DEALLOCATE(rbufer, STAT = ALLOC_ERR)
 
      END DO   !### DO n = 1, N_processes_horizontal-1
-
-! finalize moment calculation
-     DO npa = 1, N_of_probes
-
-        IF (probe_Ne(npa).GT.1.0e-9) THEN    ! note this is small but not zero
-
-           inv_N = 1.0 / probe_Ne(npa)
-
-           probe_VXe(npa) = probe_VXe(npa) * inv_N
-           probe_VYe(npa) = probe_VYe(npa) * inv_N
-           probe_VZe(npa) = probe_VZe(npa) * inv_N
-
-           probe_WXe(npa) = probe_WXe(npa) * inv_N
-           probe_WYe(npa) = probe_WYe(npa) * inv_N
-           probe_WZe(npa) = probe_WZe(npa) * inv_N
-
-           probe_VXVYe(npa) = 2.0 * probe_VXVYe(npa) * inv_N
-           probe_VXVZe(npa) = 2.0 * probe_VXVZe(npa) * inv_N
-           probe_VYVZe(npa) = 2.0 * probe_VYVZe(npa) * inv_N
-
-           rvx = probe_VXe(npa)
-           rvy = probe_VYe(npa)
-           rvz = probe_VZe(npa)
-
-           rvx2 = probe_WXe(npa)
-           rvy2 = probe_WYe(npa)
-           rvz2 = probe_WZe(npa)
-
-!           rtemp = 2.0 * (rvx * rvx + rvy * rvy + rvz * rvz) - rvx2 - rvy2 - rvz2
-           rtemp = rvx * rvx + rvy * rvy + rvz * rvz
-           rtemp = rtemp + rtemp - rvx2 - rvy2 - rvz2
-
-           probe_QXe(npa) = probe_QXe(npa) * inv_N + &
-                          & (rtemp - rvx2 - rvx2) * rvx - &
-                          & probe_VXVYe(npa) * rvy - & 
-                          & probe_VXVZe(npa) * rvz
-
-           probe_QYe(npa) = probe_QYe(npa) * inv_N - &
-                          & probe_VXVYe(npa) * rvx + &
-                          & (rtemp - rvy2 - rvy2) * rvy - &
-                          & probe_VYVZe(npa) * rvz
-
-           probe_QZe(npa) = probe_QZe(npa) * inv_N - &
-                          & probe_VXVZe(npa) * rvx - &
-                          & probe_VYVZe(npa) * rvy + &
-                          & (rtemp - rvz2 - rvz2) * rvz
-
-        ELSE
-           probe_Ne(npa) = 0.0
-
-           probe_VXe(npa) = 0.0
-           probe_VYe(npa) = 0.0
-           probe_VZe(npa) = 0.0
-
-           probe_WXe(npa) = 0.0
-           probe_WYe(npa) = 0.0
-           probe_WZe(npa) = 0.0
-
-           probe_QXe(npa) = 0.0
-           probe_QYe(npa) = 0.0
-           probe_QZe(npa) = 0.0
-        END IF   !###   IF (probe_Ne(npa).GT.1.0e-9) THEN
-
-     END DO   !###   DO npa = 1, N_of_probes
-
-!########## TO DO :: ADJUST DENSITIES at walls #########################
 
 ! calculate derived values and convert to dimensional units
 
@@ -1625,35 +1321,87 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
 
         probe_F(npa) = REAL(F_scale_V) * probe_F(npa)
 
-        probe_JXe(npa) = -probe_VXe(npa) * probe_Ne(npa) * REAL(current_factor_Am2)
-        probe_JYe(npa) = -probe_VYe(npa) * probe_Ne(npa) * REAL(current_factor_Am2)
-        probe_JZe(npa) = -probe_VZe(npa) * probe_Ne(npa) * REAL(current_factor_Am2)
+        IF (probe_Ne(npa).GT.0.0) THEN
+           probe_VXe(npa) = REAL(V_scale_ms) * (probe_JXe(npa) / probe_Ne(npa))
+           probe_VYe(npa) = REAL(V_scale_ms) * (probe_JYe(npa) / probe_Ne(npa))
+           probe_VZe(npa) = REAL(V_scale_ms) * (probe_JZe(npa) / probe_Ne(npa))
 
-        probe_TXe(npa) = MAX(0.0, probe_WXe(npa) - probe_VXe(npa)**2) * REAL(temperature_factor_eV)
-        probe_TYe(npa) = MAX(0.0, probe_WYe(npa) - probe_VYe(npa)**2) * REAL(temperature_factor_eV)
-        probe_TZe(npa) = MAX(0.0, probe_WZe(npa) - probe_VZe(npa)**2) * REAL(temperature_factor_eV)
+           probe_WXe(npa) = REAL(energy_factor_eV) * (probe_WXe(npa) / probe_Ne(npa))
+           probe_WYe(npa) = REAL(energy_factor_eV) * (probe_WYe(npa) / probe_Ne(npa))
+           probe_WZe(npa) = REAL(energy_factor_eV) * (probe_WZe(npa) / probe_Ne(npa))
 
-        probe_QXe(npa) = probe_QXe(npa) * probe_Ne(npa) * REAL(heat_flow_factor_Wm2)
-        probe_QYe(npa) = probe_QYe(npa) * probe_Ne(npa) * REAL(heat_flow_factor_Wm2)
-        probe_QZe(npa) = probe_QZe(npa) * probe_Ne(npa) * REAL(heat_flow_factor_Wm2)
+           probe_TXe(npa) = MAX(0.0, 2.0 * probe_WXe(npa) - REAL(m_e_kg / e_Cl) * probe_VXe(npa)**2)
+           probe_TYe(npa) = MAX(0.0, 2.0 * probe_WYe(npa) - REAL(m_e_kg / e_Cl) * probe_VYe(npa)**2)
+           probe_TZe(npa) = MAX(0.0, 2.0 * probe_WZe(npa) - REAL(m_e_kg / e_Cl) * probe_VZe(npa)**2)
 
-        probe_Ne(npa) = probe_Ne(npa) * REAL(N_scale_part_m3)
+           probe_Ne(npa) = REAL(N_scale_part_m3) * probe_Ne(npa)
 
-        probe_VXe(npa) = probe_VXe(npa) * REAL(V_scale_ms)
-        probe_VYe(npa) = probe_VYe(npa) * REAL(V_scale_ms)
-        probe_VZe(npa) = probe_VZe(npa) * REAL(V_scale_ms)
+           probe_JXe(npa) = -REAL(current_factor_Am2) * probe_JXe(npa)
+           probe_JYe(npa) = -REAL(current_factor_Am2) * probe_JYe(npa)
+           probe_JZe(npa) = -REAL(current_factor_Am2) * probe_JZe(npa)
 
-        probe_WXe(npa) = probe_WXe(npa) * REAL(energy_factor_eV)
-        probe_WYe(npa) = probe_WYe(npa) * REAL(energy_factor_eV)
-        probe_WZe(npa) = probe_WZe(npa) * REAL(energy_factor_eV)
+        ELSE
+           probe_VXe(npa) = 0.0
+           probe_VYe(npa) = 0.0
+           probe_VZe(npa) = 0.0
 
-        IF (T_cntr.EQ.(Save_probes_i_data_T_cntr - N_subcycles/2)) THEN
-! full current is saved only at the time when the ion current is available
-! full current is saved with the ion data
-           probe_JXsum(npa) = probe_JXe(npa)
-           probe_JYsum(npa) = probe_JYe(npa)
-           probe_JZsum(npa) = probe_JZe(npa)
+           probe_WXe(npa) = 0.0
+           probe_WYe(npa) = 0.0
+           probe_WZe(npa) = 0.0
+
+           probe_TXe(npa) = 0.0
+           probe_TYe(npa) = 0.0
+           probe_TZe(npa) = 0.0
+
+           probe_Ne(npa) = 0.0
+
+           probe_JXe(npa) = 0.0
+           probe_JYe(npa) = 0.0
+           probe_JZe(npa) = 0.0
         END IF
+
+        probe_JXsum(npa) = probe_JXe(npa)
+        probe_JYsum(npa) = probe_JYe(npa)
+        probe_JZsum(npa) = probe_JZe(npa)
+
+        DO s = 1, N_spec
+           IF (probe_Ni(npa, s).GT.0.0) THEN
+              probe_VXi(npa, s) = REAL(V_scale_ms) * (probe_JXi(npa, s) / probe_Ni(npa, s))
+              probe_VYi(npa, s) = REAL(V_scale_ms) * (probe_JYi(npa, s) / probe_Ni(npa, s))
+              probe_VZi(npa, s) = REAL(V_scale_ms) * (probe_JZi(npa, s) / probe_Ni(npa, s))
+
+              probe_WXi(npa, s) = REAL(Ms(s) * energy_factor_eV) * (probe_WXi(npa, s) / probe_Ni(npa, s))
+              probe_WYi(npa, s) = REAL(Ms(s) * energy_factor_eV) * (probe_WYi(npa, s) / probe_Ni(npa, s))
+              probe_WZi(npa, s) = REAL(Ms(s) * energy_factor_eV) * (probe_WZi(npa, s) / probe_Ni(npa, s))
+
+              probe_TXi(npa, s) = MAX(0.0, 2.0 * probe_WXi(npa, s) - REAL(Ms(s) * m_e_kg / e_Cl) * probe_VXi(npa, s)**2)
+              probe_TYi(npa, s) = MAX(0.0, 2.0 * probe_WYi(npa, s) - REAL(Ms(s) * m_e_kg / e_Cl) * probe_VYi(npa, s)**2)
+              probe_TZi(npa, s) = MAX(0.0, 2.0 * probe_WZi(npa, s) - REAL(Ms(s) * m_e_kg / e_Cl) * probe_VZi(npa, s)**2)
+
+              probe_Ni(npa, s) = REAL(N_scale_part_m3) * probe_Ni(npa, s)
+
+              probe_JXi(npa, s) = REAL(Qs(s) * current_factor_Am2) * probe_JXi(npa, s)
+              probe_JYi(npa, s) = REAL(Qs(s) * current_factor_Am2) * probe_JYi(npa, s)
+              probe_JZi(npa, s) = REAL(Qs(s) * current_factor_Am2) * probe_JZi(npa, s)
+           ELSE
+              probe_VXi(npa, s) = 0.0
+              probe_VYi(npa, s) = 0.0
+              probe_VZi(npa, s) = 0.0
+              probe_WXi(npa, s) = 0.0
+              probe_WYi(npa, s) = 0.0
+              probe_WZi(npa, s) = 0.0
+              probe_TXi(npa, s) = 0.0
+              probe_TYi(npa, s) = 0.0
+              probe_TZi(npa, s) = 0.0
+              probe_Ni(npa, s) = 0.0
+              probe_JXi(npa, s) = 0.0
+              probe_JYi(npa, s) = 0.0
+              probe_JZi(npa, s) = 0.0
+           END IF
+           probe_JXsum(npa) = probe_JXsum(npa) + probe_JXi(npa, s)
+           probe_JYsum(npa) = probe_JYsum(npa) + probe_JYi(npa, s)
+           probe_JZsum(npa) = probe_JZsum(npa) + probe_JZi(npa, s)
+        END DO
 
      END DO   !### DO npa = 1, N_of_probes
 
@@ -1668,102 +1416,202 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
 
 ! electric field EX 
      OPEN  (21, FILE = 'dim_EX_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_EX
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_EX
      CLOSE (21, STATUS = 'KEEP')
 
 ! electric field EY 
      OPEN  (21, FILE = 'dim_EY_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_EY
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_EY
      CLOSE (21, STATUS = 'KEEP')
 
 ! electrostatic potential
      OPEN  (21, FILE = 'dim_F_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_F
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_F
+     CLOSE (21, STATUS = 'KEEP')
+
+! full electric current density JXsum 
+     OPEN  (21, FILE = 'dim_JXsum_vst.dat', POSITION = 'APPEND')
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_JXsum
+     CLOSE (21, STATUS = 'KEEP')
+
+! full electric current density JYsum 
+     OPEN  (21, FILE = 'dim_JYsum_vst.dat', POSITION = 'APPEND')
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_JYsum
+     CLOSE (21, STATUS = 'KEEP')
+
+! full electric current density JZsum 
+     OPEN  (21, FILE = 'dim_JZsum_vst.dat', POSITION = 'APPEND')
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_JZsum
      CLOSE (21, STATUS = 'KEEP')
 
 ! electron density Ne 
      OPEN  (21, FILE = 'dim_Ne_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_Ne
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_Ne
      CLOSE (21, STATUS = 'KEEP')
 
 ! electron flow velocity VXe 
      OPEN  (21, FILE = 'dim_VXe_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_VXe
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_VXe
      CLOSE (21, STATUS = 'KEEP')
 
 ! electron flow velocity VYe 
      OPEN  (21, FILE = 'dim_VYe_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_VYe
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_VYe
      CLOSE (21, STATUS = 'KEEP')
 
 ! electron flow velocity VZe 
      OPEN  (21, FILE = 'dim_VZe_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_VZe
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_VZe
      CLOSE (21, STATUS = 'KEEP')
 
 ! electric current density due to electrons JXe 
      OPEN  (21, FILE = 'dim_JXe_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_JXe
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_JXe
      CLOSE (21, STATUS = 'KEEP')
 
 ! electric current density due to electrons JYe 
      OPEN  (21, FILE = 'dim_JYe_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_JYe
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_JYe
      CLOSE (21, STATUS = 'KEEP')
 
 ! electric current density due to electrons JZe 
      OPEN  (21, FILE = 'dim_JZe_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_JZe
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_JZe
      CLOSE (21, STATUS = 'KEEP')
 
 ! average electron energy WXe 
      OPEN  (21, FILE = 'dim_WXe_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_WXe
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_WXe
      CLOSE (21, STATUS = 'KEEP')
 
 ! average electron energy WYe 
      OPEN  (21, FILE = 'dim_WYe_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_WYe
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_WYe
      CLOSE (21, STATUS = 'KEEP')
 
 ! average electron energy WZe 
      OPEN  (21, FILE = 'dim_WZe_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_WZe
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_WZe
      CLOSE (21, STATUS = 'KEEP')
 
 ! electron temperature TXe 
      OPEN  (21, FILE = 'dim_TXe_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_TXe
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_TXe
      CLOSE (21, STATUS = 'KEEP')
 
 ! electron temperature TYe 
      OPEN  (21, FILE = 'dim_TYe_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_TYe
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_TYe
      CLOSE (21, STATUS = 'KEEP')
 
 ! electron temperature TZe 
      OPEN  (21, FILE = 'dim_TZe_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_TZe
+     WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_TZe
      CLOSE (21, STATUS = 'KEEP')
 
-! electron heat flow QXe 
-     OPEN  (21, FILE = 'dim_QXe_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_QXe
-     CLOSE (21, STATUS = 'KEEP')
+! ion species data
+     DO s = 1, N_spec
 
-! electron heat flow QYe 
-     OPEN  (21, FILE = 'dim_QYe_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_QYe
-     CLOSE (21, STATUS = 'KEEP')
+! density
+        Nis_filename = 'dim_Ni_S_vst.dat'
+        Nis_filename(8:8) = convert_int_to_txt_string(s, 1)
+        OPEN  (21, FILE = Nis_filename, POSITION = 'APPEND')
+        WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_Ni(1:N_of_probes, s)
+        CLOSE (21, STATUS = 'KEEP')
 
-! electron heat flow QZe 
-     OPEN  (21, FILE = 'dim_QZe_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_QZe
-     CLOSE (21, STATUS = 'KEEP')
+! flow velocity VX
+        NNis_filename = 'dim_VXi_S_vst.dat'
+        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
+        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
+        WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_VXi(1:N_of_probes, s)
+        CLOSE (21, STATUS = 'KEEP')
+
+! flow velocity VY
+        NNis_filename = 'dim_VYi_S_vst.dat'
+        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
+        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
+        WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_VYi(1:N_of_probes, s)
+        CLOSE (21, STATUS = 'KEEP')
+
+! flow velocity VZ
+        NNis_filename = 'dim_VZi_S_vst.dat'
+        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
+        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
+        WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_VZi(1:N_of_probes, s)
+        CLOSE (21, STATUS = 'KEEP')
+
+! electric curent density due to ions JX
+        NNis_filename = 'dim_JXi_S_vst.dat'
+        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
+        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
+        WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_JXi(1:N_of_probes, s)
+        CLOSE (21, STATUS = 'KEEP')
+
+! electric curent density due to ions JY
+        NNis_filename = 'dim_JYi_S_vst.dat'
+        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
+        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
+        WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_JYi(1:N_of_probes, s)
+        CLOSE (21, STATUS = 'KEEP')
+
+! electric curent density due to ions JZ
+        NNis_filename = 'dim_JZi_S_vst.dat'
+        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
+        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
+        WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_JZi(1:N_of_probes, s)
+        CLOSE (21, STATUS = 'KEEP')
+
+! average ion energy WX
+        NNis_filename = 'dim_WXi_S_vst.dat'
+        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
+        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
+        WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_WXi(1:N_of_probes, s)
+        CLOSE (21, STATUS = 'KEEP')
+
+! average ion energy WY
+        NNis_filename = 'dim_WYi_S_vst.dat'
+        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
+        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
+        WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_WYi(1:N_of_probes, s)
+        CLOSE (21, STATUS = 'KEEP')
+
+! average ion energy WZ
+        NNis_filename = 'dim_WZi_S_vst.dat'
+        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
+        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
+        WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_WZi(1:N_of_probes, s)
+        CLOSE (21, STATUS = 'KEEP')
+
+! average ion temperature TX
+        NNis_filename = 'dim_TXi_S_vst.dat'
+        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
+        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
+        WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_TXi(1:N_of_probes, s)
+        CLOSE (21, STATUS = 'KEEP')
+
+! average ion temperature TY
+        NNis_filename = 'dim_TYi_S_vst.dat'
+        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
+        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
+        WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_TYi(1:N_of_probes, s)
+        CLOSE (21, STATUS = 'KEEP')
+
+! average ion temperature TY
+        NNis_filename = 'dim_TZi_S_vst.dat'
+        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
+        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
+        WRITE (21, '(2x,f14.6,100(1x,e14.7))') time_ns, probe_TZi(1:N_of_probes, s)
+        CLOSE (21, STATUS = 'KEEP')
+
+     END DO
 
      DEALLOCATE(probe_EX, STAT = ALLOC_ERR)
      DEALLOCATE(probe_EY, STAT = ALLOC_ERR)
      DEALLOCATE(probe_F, STAT = ALLOC_ERR)
+
+     DEALLOCATE(probe_JXsum, STAT = ALLOC_ERR)
+     DEALLOCATE(probe_JYsum, STAT = ALLOC_ERR)
+     DEALLOCATE(probe_JZsum, STAT = ALLOC_ERR)
 
      DEALLOCATE(probe_Ne, STAT = ALLOC_ERR)
 
@@ -1783,20 +1631,30 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
      DEALLOCATE(probe_TYe, STAT = ALLOC_ERR)
      DEALLOCATE(probe_TZe, STAT = ALLOC_ERR)
 
-     DEALLOCATE(probe_QXe, STAT = ALLOC_ERR)
-     DEALLOCATE(probe_QYe, STAT = ALLOC_ERR)
-     DEALLOCATE(probe_QZe, STAT = ALLOC_ERR)
+     DEALLOCATE(probe_Ni, STAT = ALLOC_ERR)
 
-     DEALLOCATE(probe_VXVYe, STAT = ALLOC_ERR)
-     DEALLOCATE(probe_VXVZe, STAT = ALLOC_ERR)
-     DEALLOCATE(probe_VYVZe, STAT = ALLOC_ERR)
+     DEALLOCATE(probe_VXi, STAT = ALLOC_ERR)
+     DEALLOCATE(probe_VYi, STAT = ALLOC_ERR)
+     DEALLOCATE(probe_VZi, STAT = ALLOC_ERR)
+
+     DEALLOCATE(probe_JXi, STAT = ALLOC_ERR)
+     DEALLOCATE(probe_JYi, STAT = ALLOC_ERR)
+     DEALLOCATE(probe_JZi, STAT = ALLOC_ERR)
+
+     DEALLOCATE(probe_WXi, STAT = ALLOC_ERR)
+     DEALLOCATE(probe_WYi, STAT = ALLOC_ERR)
+     DEALLOCATE(probe_WZi, STAT = ALLOC_ERR)
+
+     DEALLOCATE(probe_TXi, STAT = ALLOC_ERR)
+     DEALLOCATE(probe_TYi, STAT = ALLOC_ERR)
+     DEALLOCATE(probe_TZi, STAT = ALLOC_ERR)
 
   ELSE
 
 ! send data to the zero cluster master
      IF (N_of_probes_cluster.GT.0) THEN
 
-        bufsize = (3 + 13) * N_of_probes_cluster
+        bufsize = (3 + 7 + 7 * N_spec) * N_of_probes_cluster
         ALLOCATE(rbufer(1:bufsize), STAT = ALLOC_ERR)
 
         DO npc = 1, N_of_probes_cluster
@@ -1817,15 +1675,15 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
 
         pos1 = pos1 + N_of_probes_cluster
         pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_VXe_cluster(1:N_of_probes_cluster)   ! +4*recsize
+        rbufer(pos1:pos2) = probe_JXe_cluster(1:N_of_probes_cluster)   ! +4*recsize
 
         pos1 = pos1 + N_of_probes_cluster
         pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_VYe_cluster(1:N_of_probes_cluster)   ! +5*recsize
+        rbufer(pos1:pos2) = probe_JYe_cluster(1:N_of_probes_cluster)   ! +5*recsize
 
         pos1 = pos1 + N_of_probes_cluster
         pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_VZe_cluster(1:N_of_probes_cluster)   ! +6*recsize
+        rbufer(pos1:pos2) = probe_JZe_cluster(1:N_of_probes_cluster)   ! +6*recsize
 
         pos1 = pos1 + N_of_probes_cluster
         pos2 = pos2 + N_of_probes_cluster
@@ -1839,29 +1697,35 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
         pos2 = pos2 + N_of_probes_cluster
         rbufer(pos1:pos2) = probe_WZe_cluster(1:N_of_probes_cluster)   ! +9*recsize
 
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_QXe_cluster(1:N_of_probes_cluster)   ! +10*recsize
+        DO s = 1, N_spec
+           pos1 = pos1 + N_of_probes_cluster
+           pos2 = pos2 + N_of_probes_cluster
+           rbufer(pos1:pos2) = probe_Ni_cluster(1:N_of_probes_cluster, s)
+        
+           pos1 = pos1 + N_of_probes_cluster
+           pos2 = pos2 + N_of_probes_cluster
+           rbufer(pos1:pos2) = probe_JXi_cluster(1:N_of_probes_cluster, s)
 
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_QYe_cluster(1:N_of_probes_cluster)   ! +11*recsize
+           pos1 = pos1 + N_of_probes_cluster
+           pos2 = pos2 + N_of_probes_cluster
+           rbufer(pos1:pos2) = probe_JYi_cluster(1:N_of_probes_cluster, s)
 
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_QZe_cluster(1:N_of_probes_cluster)   ! +12*recsize
+           pos1 = pos1 + N_of_probes_cluster
+           pos2 = pos2 + N_of_probes_cluster
+           rbufer(pos1:pos2) = probe_JZi_cluster(1:N_of_probes_cluster, s)
 
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_VXVYe_cluster(1:N_of_probes_cluster)   ! +13*recsize
+           pos1 = pos1 + N_of_probes_cluster
+           pos2 = pos2 + N_of_probes_cluster
+           rbufer(pos1:pos2) = probe_WXi_cluster(1:N_of_probes_cluster, s)
 
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_VXVZe_cluster(1:N_of_probes_cluster)   ! +14*recsize
+           pos1 = pos1 + N_of_probes_cluster
+           pos2 = pos2 + N_of_probes_cluster
+           rbufer(pos1:pos2) = probe_WYi_cluster(1:N_of_probes_cluster, s)
 
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_VYVZe_cluster(1:N_of_probes_cluster)   ! +15*recsize
+           pos1 = pos1 + N_of_probes_cluster
+           pos2 = pos2 + N_of_probes_cluster
+           rbufer(pos1:pos2) = probe_WZi_cluster(1:N_of_probes_cluster, s)
+        END DO
 
         CALL MPI_SEND(rbufer(1:bufsize), bufsize, MPI_REAL, 0, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
  
@@ -1871,543 +1735,4 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
 
   END IF   !### IF (Rank_horizontal.EQ.0) THEN
 
-END SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
-
-
-!------------------------------
-!
-SUBROUTINE DO_PROBE_DIAGNOSTICS_i_DATA
-    
-  USE ParallelOperationValues
-  USE Diagnostics
-  USE CurrentProblemValues
-  USE ClusterAndItsBoundaries
-  USE IonParticles, ONLY : N_spec, Qs, Ms
-
-  IMPLICIT NONE  
-
-  INCLUDE 'mpif.h'
-
-  INTEGER ierr
-  INTEGER stattus(MPI_STATUS_SIZE)
-  INTEGER request
-
-  INTEGER bufsize
-  REAL, ALLOCATABLE :: rbufer(:)
-  INTEGER ALLOC_ERR
-  INTEGER pos1, pos2
-
-  INTEGER s, k, n, i, j
-  INTEGER npa, npb, npc
-
-  REAL, ALLOCATABLE :: probe_Ni(:,:)
-
-  REAL, ALLOCATABLE :: probe_VXi(:,:)
-  REAL, ALLOCATABLE :: probe_VYi(:,:)
-  REAL, ALLOCATABLE :: probe_VZi(:,:)
-
-  REAL, ALLOCATABLE :: probe_WXi(:,:)
-  REAL, ALLOCATABLE :: probe_WYi(:,:)
-  REAL, ALLOCATABLE :: probe_WZi(:,:)
-
-  REAL, ALLOCATABLE :: probe_VXVYi(:,:)
-  REAL, ALLOCATABLE :: probe_VXVZi(:,:)
-  REAL, ALLOCATABLE :: probe_VYVZi(:,:)
-
-  REAL, ALLOCATABLE :: probe_QXi(:,:)
-  REAL, ALLOCATABLE :: probe_QYi(:,:)
-  REAL, ALLOCATABLE :: probe_QZi(:,:)
-
-  REAL, ALLOCATABLE :: probe_JXi(:,:)
-  REAL, ALLOCATABLE :: probe_JYi(:,:)
-  REAL, ALLOCATABLE :: probe_JZi(:,:)
-
-  REAL, ALLOCATABLE :: probe_TXi(:,:)
-  REAL, ALLOCATABLE :: probe_TYi(:,:)
-  REAL, ALLOCATABLE :: probe_TZi(:,:)
-
-  INTEGER pos
-  INTEGER recsize
-
-  REAL rvx, rvy, rvz
-  REAL rvx2, rvy2, rvz2
-  REAL rtemp, inv_N
-
-  REAL time_ns
-
-  CHARACTER(16) Nis_filename   ! dim_Ni_S_vst.dat
-                               ! ----*----I----*--
-  CHARACTER(17) NNis_filename  ! dim_VXi_S_vst.dat
-
-  INTERFACE
-     function convert_int_to_txt_string(int_number, length_of_string)
-       character*(length_of_string) convert_int_to_txt_string
-       integer int_number
-       integer length_of_string
-     end function convert_int_to_txt_string
-  END INTERFACE
-
-  IF (cluster_rank_key.NE.0) RETURN
-
-! the rest is carried out by masters only
-
-  IF (Rank_horizontal.EQ.0) THEN
-! the zero-rank master process assembles all probe data 
-
-     ALLOCATE(probe_Ni(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-
-     ALLOCATE(probe_VXi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-     ALLOCATE(probe_VYi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-     ALLOCATE(probe_VZi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-
-     ALLOCATE(probe_WXi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-     ALLOCATE(probe_WYi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-     ALLOCATE(probe_WZi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-
-     ALLOCATE(probe_VXVYi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-     ALLOCATE(probe_VXVZi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-     ALLOCATE(probe_VYVZi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-
-     ALLOCATE(probe_QXi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-     ALLOCATE(probe_QYi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-     ALLOCATE(probe_QZi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-
-     ALLOCATE(probe_JXi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-     ALLOCATE(probe_JYi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-     ALLOCATE(probe_JZi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-
-     ALLOCATE(probe_TXi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-     ALLOCATE(probe_TYi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-     ALLOCATE(probe_TZi(1:N_of_probes,1:N_spec), STAT = ALLOC_ERR)
-
-! values of moments N, V, W, V*V*, Q in probes are already calculated but are NOT synchronized in overlapping nodes
-
-     probe_Ni = 0.0
-
-     probe_VXi = 0.0
-     probe_VYi = 0.0
-     probe_VZi = 0.0
-
-     probe_WXi = 0.0
-     probe_WYi = 0.0
-     probe_WZi = 0.0
-
-     probe_VXVYi = 0.0
-     probe_VXVZi = 0.0
-     probe_VYVZi = 0.0
-
-     probe_QXi = 0.0
-     probe_QYi = 0.0
-     probe_QZi = 0.0
-
-! includes its own probes (if there are any)
-     DO npc = 1, N_of_probes_cluster
-
-        npa = List_of_probes_cluster(npc)    ! npa = n-umber of p-robe, a-ll   npc = n-umber of p-robe in c-luster
-
-        i = Probe_position(1, npa)
-        j = Probe_position(2, npa)
-        DO s = 1, N_spec
-           probe_Ni(npa, s) = probe_Ni_cluster(npc, s)
-
-           probe_VXi(npa, s) = probe_VXi_cluster(npc, s)
-           probe_VYi(npa, s) = probe_VYi_cluster(npc, s)
-           probe_VZi(npa, s) = probe_VZi_cluster(npc, s)
-
-           probe_WXi(npa, s) = probe_WXi_cluster(npc, s)
-           probe_WYi(npa, s) = probe_WYi_cluster(npc, s)
-           probe_WZi(npa, s) = probe_WZi_cluster(npc, s)
-
-           probe_VXVYi(npa, s) = probe_VXVYi_cluster(npc, s)
-           probe_VXVZi(npa, s) = probe_VXVZi_cluster(npc, s)
-           probe_VYVZi(npa, s) = probe_VYVZi_cluster(npc, s)
-
-           probe_QXi(npa, s) = probe_QXi_cluster(npc, s)
-           probe_QYi(npa, s) = probe_QYi_cluster(npc, s)
-           probe_QZi(npa, s) = probe_QZi_cluster(npc, s)
-        END DO
-     END DO
-
-! assemble probe data from all other clusters
-     DO n = 1, N_processes_horizontal-1
-
-        IF (diag_cluster(n)%N_probes.LE.0) CYCLE
-
-        recsize = diag_cluster(n)%N_probes
-        bufsize = 13 * N_spec * recsize   ! i::N,VX,VY,VZ,WX,WY,WZ,QX,QY,QZ,VXVY,VXVZ,VYVZ
-        ALLOCATE(rbufer(1:bufsize), STAT = ALLOC_ERR)
-
-        CALL MPI_RECV(rbufer(1:bufsize), bufsize, MPI_REAL, n, n, COMM_HORIZONTAL, stattus, ierr)
-
-! since moments in overlapping areas are not synchronized, values in probes belonging to more than one clusters are accumulated
-        DO s = 1, N_spec
-           pos = (s-1) * 13 * recsize
-           DO npc = 1, recsize
-              npa = diag_cluster(n)%probe_number(npc)
-
-              probe_Ni(npa, s)  = probe_Ni(npa, s) + rbufer(npc+pos)
-
-!print *, npc, npa, rbufer(npc+pos)
-
-              probe_VXi(npa, s) = probe_VXi(npa, s) + rbufer(npc+pos+  recsize)
-              probe_VYi(npa, s) = probe_VYi(npa, s) + rbufer(npc+pos+2*recsize)
-              probe_VZi(npa, s) = probe_VZi(npa, s) + rbufer(npc+pos+3*recsize)
-
-              probe_WXi(npa, s) = probe_WXi(npa, s) + rbufer(npc+pos+4*recsize)
-              probe_WYi(npa, s) = probe_WYi(npa, s) + rbufer(npc+pos+5*recsize)
-              probe_WZi(npa, s) = probe_WZi(npa, s) + rbufer(npc+pos+6*recsize)
-
-              probe_QXi(npa, s) = probe_QXi(npa, s) + rbufer(npc+pos+7*recsize)
-              probe_QYi(npa, s) = probe_QYi(npa, s) + rbufer(npc+pos+8*recsize)
-              probe_QZi(npa, s) = probe_QZi(npa, s) + rbufer(npc+pos+9*recsize)
-
-              probe_VXVYi(npa, s) = probe_VXVYi(npa, s) + rbufer(npc+pos+10*recsize)
-              probe_VXVZi(npa, s) = probe_VXVZi(npa, s) + rbufer(npc+pos+11*recsize)
-              probe_VYVZi(npa, s) = probe_VYVZi(npa, s) + rbufer(npc+pos+12*recsize)
-           END DO
-        END DO
-           
-        DEALLOCATE(rbufer, STAT = ALLOC_ERR)
-
-     END DO   !### DO n = 1, N_processes_horizontal-1
-
-! finalize moment calculation
-     DO s = 1, N_spec
-        DO npa = 1, N_of_probes
-
-           IF (probe_Ni(npa, s).GT.1.0e-9) THEN    ! note this is small but not zero
-
-              inv_N = 1.0 / probe_Ni(npa, s)
-
-              probe_VXi(npa, s) = probe_VXi(npa, s) * inv_N
-              probe_VYi(npa, s) = probe_VYi(npa, s) * inv_N
-              probe_VZi(npa, s) = probe_VZi(npa, s) * inv_N
-
-              probe_WXi(npa, s) = probe_WXi(npa, s) * inv_N
-              probe_WYi(npa, s) = probe_WYi(npa, s) * inv_N
-              probe_WZi(npa, s) = probe_WZi(npa, s) * inv_N
-
-              probe_VXVYi(npa, s) = 2.0 * probe_VXVYi(npa, s) * inv_N
-              probe_VXVZi(npa, s) = 2.0 * probe_VXVZi(npa, s) * inv_N
-              probe_VYVZi(npa, s) = 2.0 * probe_VYVZi(npa, s) * inv_N
-
-              rvx = probe_VXi(npa, s)
-              rvy = probe_VYi(npa, s)
-              rvz = probe_VZi(npa, s)
-
-              rvx2 = probe_WXi(npa, s)
-              rvy2 = probe_WYi(npa, s)
-              rvz2 = probe_WZi(npa, s)
-
-!           rtemp = 2.0 * (rvx * rvx + rvy * rvy + rvz * rvz) - rvx2 - rvy2 - rvz2
-              rtemp = rvx * rvx + rvy * rvy + rvz * rvz
-              rtemp = rtemp + rtemp - rvx2 - rvy2 - rvz2
-
-              probe_QXi(npa, s) = probe_QXi(npa, s) * inv_N + &
-                             & (rtemp - rvx2 - rvx2) * rvx - &
-                             & probe_VXVYi(npa, s) * rvy - & 
-                             & probe_VXVZi(npa, s) * rvz
-
-              probe_QYi(npa, s) = probe_QYi(npa, s) * inv_N - &
-                             & probe_VXVYi(npa, s) * rvx + &
-                             & (rtemp - rvy2 - rvy2) * rvy - &
-                             & probe_VYVZi(npa, s) * rvz
-
-              probe_QZi(npa, s) = probe_QZi(npa, s) * inv_N - &
-                             & probe_VXVZi(npa, s) * rvx - &
-                             & probe_VYVZi(npa, s) * rvy + &
-                             & (rtemp - rvz2 - rvz2) * rvz
-
-           ELSE
-              probe_Ni(npa, s) = 0.0
-
-              probe_VXi(npa, s) = 0.0
-              probe_VYi(npa, s) = 0.0
-              probe_VZi(npa, s) = 0.0
-
-              probe_WXi(npa, s) = 0.0
-              probe_WYi(npa, s) = 0.0
-              probe_WZi(npa, s) = 0.0
-
-              probe_QXi(npa, s) = 0.0
-              probe_QYi(npa, s) = 0.0
-              probe_QZi(npa, s) = 0.0
-           END IF   !###   IF (probe_Ni(npa, s).GT.1.0e-9) THEN
-
-        END DO   !###   DO npa = 1, N_of_probes
-     END DO   !###   DO s = 1, N_spec
-
-!### TO DO :: adjust densities near walls #####################
-
-! calculate derived values and convert to dimensional units
-
-     DO npa = 1, N_of_probes
-
-        DO s = 1, N_spec
-
-           probe_JXi(npa, s) = probe_VXi(npa, s) * probe_Ni(npa, s) * REAL(Qs(s) * current_factor_Am2)
-           probe_JYi(npa, s) = probe_VYi(npa, s) * probe_Ni(npa, s) * REAL(Qs(s) * current_factor_Am2)
-           probe_JZi(npa, s) = probe_VZi(npa, s) * probe_Ni(npa, s) * REAL(Qs(s) * current_factor_Am2)
-          
-           probe_TXi(npa, s) = MAX(0.0, probe_WXi(npa, s) - probe_VXi(npa, s)**2) * REAL(Ms(s) * temperature_factor_eV)
-           probe_TYi(npa, s) = MAX(0.0, probe_WYi(npa, s) - probe_VYi(npa, s)**2) * REAL(Ms(s) * temperature_factor_eV)
-           probe_TZi(npa, s) = MAX(0.0, probe_WZi(npa, s) - probe_VZi(npa, s)**2) * REAL(Ms(s) * temperature_factor_eV)
-
-           probe_QXi(npa, s) = probe_Ni(npa, s) * probe_QXi(npa, s) * REAL(Ms(s) * heat_flow_factor_Wm2)
-           probe_QYi(npa, s) = probe_Ni(npa, s) * probe_QYi(npa, s) * REAL(Ms(s) * heat_flow_factor_Wm2)
-           probe_QZi(npa, s) = probe_Ni(npa, s) * probe_QZi(npa, s) * REAL(Ms(s) * heat_flow_factor_Wm2)
-
-           probe_Ni(npa, s) = probe_Ni(npa, s) * REAL(N_scale_part_m3)
-
-           probe_VXi(npa, s) = probe_VXi(npa, s) * REAL(V_scale_ms)
-           probe_VYi(npa, s) = probe_VYi(npa, s) * REAL(V_scale_ms)
-           probe_VZi(npa, s) = probe_VZi(npa, s) * REAL(V_scale_ms)
-
-           probe_WXi(npa, s) = probe_WXi(npa, s) * REAL(Ms(s) * energy_factor_eV)
-           probe_WYi(npa, s) = probe_WYi(npa, s) * REAL(Ms(s) * energy_factor_eV)
-           probe_WZi(npa, s) = probe_WZi(npa, s) * REAL(Ms(s) * energy_factor_eV)
-
-           probe_JXsum(npa) = probe_JXsum(npa) + probe_JXi(npa, s)
-           probe_JYsum(npa) = probe_JYsum(npa) + probe_JYi(npa, s)
-           probe_JZsum(npa) = probe_JZsum(npa) + probe_JZi(npa, s)
-        END DO
-
-     END DO   !### DO npa = 1, N_of_probes
-
-!  write to files
-
-     time_ns = REAL((T_cntr - N_subcycles/2) * delta_t_s * 1.0d9)
-
-! full electric current density JXsum 
-     OPEN  (21, FILE = 'dim_JXsum_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_JXsum
-     CLOSE (21, STATUS = 'KEEP')
-
-! full electric current density JYsum 
-     OPEN  (21, FILE = 'dim_JYsum_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_JYsum
-     CLOSE (21, STATUS = 'KEEP')
-
-! full electric current density JZsum 
-     OPEN  (21, FILE = 'dim_JZsum_vst.dat', POSITION = 'APPEND')
-     WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_JZsum
-     CLOSE (21, STATUS = 'KEEP')
-
-! ion species data
-     DO s = 1, N_spec
-
-! density
-        Nis_filename = 'dim_Ni_S_vst.dat'
-        Nis_filename(8:8) = convert_int_to_txt_string(s, 1)
-        OPEN  (21, FILE = Nis_filename, POSITION = 'APPEND')
-        WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_Ni(1:N_of_probes, s)
-        CLOSE (21, STATUS = 'KEEP')
-
-! flow velocity VX
-        NNis_filename = 'dim_VXi_S_vst.dat'
-        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
-        WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_VXi(1:N_of_probes, s)
-        CLOSE (21, STATUS = 'KEEP')
-
-! flow velocity VY
-        NNis_filename = 'dim_VYi_S_vst.dat'
-        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
-        WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_VYi(1:N_of_probes, s)
-        CLOSE (21, STATUS = 'KEEP')
-
-! flow velocity VZ
-        NNis_filename = 'dim_VZi_S_vst.dat'
-        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
-        WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_VZi(1:N_of_probes, s)
-        CLOSE (21, STATUS = 'KEEP')
-
-! electric curent density due to ions JX
-        NNis_filename = 'dim_JXi_S_vst.dat'
-        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
-        WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_JXi(1:N_of_probes, s)
-        CLOSE (21, STATUS = 'KEEP')
-
-! electric curent density due to ions JY
-        NNis_filename = 'dim_JYi_S_vst.dat'
-        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
-        WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_JYi(1:N_of_probes, s)
-        CLOSE (21, STATUS = 'KEEP')
-
-! electric curent density due to ions JZ
-        NNis_filename = 'dim_JZi_S_vst.dat'
-        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
-        WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_JZi(1:N_of_probes, s)
-        CLOSE (21, STATUS = 'KEEP')
-
-! average ion energy WX
-        NNis_filename = 'dim_WXi_S_vst.dat'
-        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
-        WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_WXi(1:N_of_probes, s)
-        CLOSE (21, STATUS = 'KEEP')
-
-! average ion energy WY
-        NNis_filename = 'dim_WYi_S_vst.dat'
-        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
-        WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_WYi(1:N_of_probes, s)
-        CLOSE (21, STATUS = 'KEEP')
-
-! average ion energy WZ
-        NNis_filename = 'dim_WZi_S_vst.dat'
-        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
-        WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_WZi(1:N_of_probes, s)
-        CLOSE (21, STATUS = 'KEEP')
-
-! ion temperature TX
-        NNis_filename = 'dim_TXi_S_vst.dat'
-        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
-        WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_TXi(1:N_of_probes, s)
-        CLOSE (21, STATUS = 'KEEP')
-
-! ion temperature TY
-        NNis_filename = 'dim_TYi_S_vst.dat'
-        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
-        WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_TYi(1:N_of_probes, s)
-        CLOSE (21, STATUS = 'KEEP')
-
-! ion temperature TY
-        NNis_filename = 'dim_TZi_S_vst.dat'
-        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
-        WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_TZi(1:N_of_probes, s)
-        CLOSE (21, STATUS = 'KEEP')
-
-! ion heat flow QX
-        NNis_filename = 'dim_QXi_S_vst.dat'
-        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
-        WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_QXi(1:N_of_probes, s)
-        CLOSE (21, STATUS = 'KEEP')
-
-! ion heat flow QY
-        NNis_filename = 'dim_QYi_S_vst.dat'
-        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
-        WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_QYi(1:N_of_probes, s)
-        CLOSE (21, STATUS = 'KEEP')
-
-! ion heat flow QZ
-        NNis_filename = 'dim_QZi_S_vst.dat'
-        NNis_filename(9:9) = convert_int_to_txt_string(s, 1)
-        OPEN  (21, FILE = NNis_filename, POSITION = 'APPEND')
-        WRITE (21, '(1x,f15.6,100(1x,e14.7))') time_ns, probe_QZi(1:N_of_probes, s)
-        CLOSE (21, STATUS = 'KEEP')
-
-     END DO
-
-     DEALLOCATE(probe_Ni, STAT = ALLOC_ERR)
-
-     DEALLOCATE(probe_VXi, STAT = ALLOC_ERR)
-     DEALLOCATE(probe_VYi, STAT = ALLOC_ERR)
-     DEALLOCATE(probe_VZi, STAT = ALLOC_ERR)
-
-     DEALLOCATE(probe_VXVYi, STAT = ALLOC_ERR)
-     DEALLOCATE(probe_VXVZi, STAT = ALLOC_ERR)
-     DEALLOCATE(probe_VYVZi, STAT = ALLOC_ERR)
-
-     DEALLOCATE(probe_JXi, STAT = ALLOC_ERR)
-     DEALLOCATE(probe_JYi, STAT = ALLOC_ERR)
-     DEALLOCATE(probe_JZi, STAT = ALLOC_ERR)
-
-     DEALLOCATE(probe_WXi, STAT = ALLOC_ERR)
-     DEALLOCATE(probe_WYi, STAT = ALLOC_ERR)
-     DEALLOCATE(probe_WZi, STAT = ALLOC_ERR)
-
-     DEALLOCATE(probe_TXi, STAT = ALLOC_ERR)
-     DEALLOCATE(probe_TYi, STAT = ALLOC_ERR)
-     DEALLOCATE(probe_TZi, STAT = ALLOC_ERR)
-
-     DEALLOCATE(probe_QXi, STAT = ALLOC_ERR)
-     DEALLOCATE(probe_QYi, STAT = ALLOC_ERR)
-     DEALLOCATE(probe_QZi, STAT = ALLOC_ERR)
-
-  ELSE   !### IF (Rank_horizontal.EQ.0) THEN
-
-! send data to the zero cluster master
-     IF (N_of_probes_cluster.LE.0) RETURN
-
-     bufsize = 13 * N_spec * N_of_probes_cluster
-     ALLOCATE(rbufer(1:bufsize), STAT = ALLOC_ERR)
-
-     pos1 = 1 - N_of_probes_cluster
-     pos2 = 0
-
-     DO s = 1, N_spec
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_Ni_cluster(1:N_of_probes_cluster, s)
-
-!print *, rbufer(pos1:pos2)
-        
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_VXi_cluster(1:N_of_probes_cluster, s)
-
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_VYi_cluster(1:N_of_probes_cluster, s)
-
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_VZi_cluster(1:N_of_probes_cluster, s)
-
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_WXi_cluster(1:N_of_probes_cluster, s)
-
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_WYi_cluster(1:N_of_probes_cluster, s)
-
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_WZi_cluster(1:N_of_probes_cluster, s)
-
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_QXi_cluster(1:N_of_probes_cluster, s)
-
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_QYi_cluster(1:N_of_probes_cluster, s)
-
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_QZi_cluster(1:N_of_probes_cluster, s)
-
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_VXVYi_cluster(1:N_of_probes_cluster, s)
-
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_VXVZi_cluster(1:N_of_probes_cluster, s)
-
-        pos1 = pos1 + N_of_probes_cluster
-        pos2 = pos2 + N_of_probes_cluster
-        rbufer(pos1:pos2) = probe_VYVZi_cluster(1:N_of_probes_cluster, s)
-     END DO
-     
-     CALL MPI_SEND(rbufer(1:bufsize), bufsize, MPI_REAL, 0, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
- 
-     DEALLOCATE(rbufer)
-
-  END IF   !### IF (Rank_horizontal.EQ.0) THEN
-
-END SUBROUTINE DO_PROBE_DIAGNOSTICS_i_DATA
-
+END SUBROUTINE DO_PROBE_DIAGNOSTICS
