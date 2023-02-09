@@ -70,19 +70,13 @@ SUBROUTINE PREPARE_EXTERNAL_FIELDS
      CLOSE (9, STATUS = 'KEEP')
 
 !B_ext = 1.0d-4 * 100.0_8 / B_scale_T !################  100 Gauss = 0.01 Tesla
-     Bx_ext = Bx_ext * 1.0d-4 / B_scale_T  
-     By_ext = By_ext * 1.0d-4 / B_scale_T  
-!###  Bz_ext = Bz_ext * 1.0d-4 / B_scale_T
+     Bx_ext = (Bx_ext * 1.0d-4) / B_scale_T  
+     By_ext = (By_ext * 1.0d-4) / B_scale_T  
+!###  Bz_ext = (Bz_ext * 1.0d-4) / B_scale_T
 
-     Bz_0    = Bz_0    * 1.0d-4 / B_scale_T
-
-     Bz_max  = Bz_max  * 1.0d-4 / B_scale_T
-!### warning ###, nonuniform Bz profile is disabled, to set thte constant external Bz use Bz_max
-!### the way how the external fields are specified needs to be revised to make it more universal 
-     Bz_ext = Bz_max   !###
-     IF (Rank_of_process.EQ.0) PRINT '("### Uniform Bz = ",e12.5," (Gauss) is assumed, set via BZ at y_Bmax in init_extfields.dat ###")', Bz_ext * B_scale_T * 1.0d4
-
-     Bz_Lsys = Bz_Lsys * 1.0d-4 / B_scale_T
+     Bz_0    = (Bz_0    * 1.0d-4) / B_scale_T
+     Bz_max  = (Bz_max  * 1.0d-4) / B_scale_T
+     Bz_Lsys = (Bz_Lsys * 1.0d-4) / B_scale_T
      y_Bmax = y_Bmax * 0.01_8 / delta_x_m
 
      half_over_sigma2_1 = 0.5_8 * (delta_x_m * 100.0_8 / half_over_sigma2_1)**2
@@ -96,7 +90,6 @@ SUBROUTINE PREPARE_EXTERNAL_FIELDS
 
      b1 = Bz_max - a1
      b2 = Bz_max - a2
-
 
      IF (Rank_of_process.EQ.0) THEN
         OPEN (10, FILE = 'external_Bz_vs_y.dat')
@@ -240,16 +233,16 @@ REAL(8) FUNCTION Bz(x, y)
   REAL(8) x, y
   REAL(8) h
 
-  Bz = Bz_ext
+  Bz = 0.0_8
+!  Bz = Bz_ext
 
-!### new - the nonuniform magnetic field profile is disabled for now, constant Bz assumed
-!### 
-!###  h = y - y_Bmax
-!###  IF (h.LT.0.0_8) THEN
-!###     Bz = a1 * EXP(-half_over_sigma2_1 * h * h) + b1
-!###  ELSE
-!###     Bz = a2 * EXP(-half_over_sigma2_2 * h * h) + b2
-!###  END IF
+!  h = y - y_Bmax
+
+!  IF (h.LT.0.0_8) THEN
+!     Bz = a1 * EXP(-half_over_sigma2_1 * h * h) + b1
+!  ELSE
+!     Bz = a2 * EXP(-half_over_sigma2_2 * h * h) + b2
+!  END IF
 
 END FUNCTION Bz
 

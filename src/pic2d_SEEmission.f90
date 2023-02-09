@@ -179,6 +179,7 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
 
   REAL(8) x_new, y_new             ! scattered electron coordinates
   REAL(8) vx_new, vy_new, vz_new   ! scattered electron velocity components
+  REAL(8) ax_new, ay_new           ! for DI electron advance
   INTEGER tag_new                  ! scattered electron tag 
 
   INTEGER jbelow, jabove
@@ -206,6 +207,10 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
            vx_new = -vx
            vy_new =  vy
            vz_new =  vz
+
+           ax_new = 0.0_8
+           ay_new = 0.0_8
+
            tag_new = myobject%object_id_number
 
            IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -225,6 +230,10 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
            vx_new =  vx
            vy_new = -vy
            vz_new =  vz
+            
+           ax_new = 0.0_8
+           ay_new = 0.0_8
+
            tag_new = myobject%object_id_number
 
            IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -244,6 +253,10 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
            vx_new = -vx
            vy_new =  vy
            vz_new =  vz
+
+           ax_new = 0.0_8
+           ay_new = 0.0_8
+
            tag_new = myobject%object_id_number
 
            IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -263,6 +276,10 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
            vx_new =  vx
            vy_new = -vy
            vz_new =  vz
+
+           ax_new = 0.0_8
+           ay_new = 0.0_8
+
            tag_new = myobject%object_id_number
 
            IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -285,7 +302,8 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
 !     theta = 1.5707963_8 * well_random_number()                 ! note that 1.5707963 is sligtly less than the exact pi/2=1.5707963267949
 
  ! the distribution over angle theta angle is f(theta) = COS(theta)   
-        theta = ASIN(MIN(well_random_number(),1.0_8))              
+ !       theta = ASIN(MIN(well_random_number(),1.0_8))
+        theta = ASIN( sqrt(MIN(well_random_number(),1.0_8)) ) 
         fi   = 6.283185307179_8 * well_random_number()
 
         IF (dirflag.EQ.1) THEN
@@ -295,6 +313,10 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
            vx_new = v * COS(theta)
            vy_new = v * SIN(theta) * SIN(fi)
            vz_new = v * SIN(theta) * COS(fi)
+
+           ax_new = 0.0_8
+           ay_new = 0.0_8
+
            tag_new = myobject%object_id_number
 
            IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -314,6 +336,10 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
            vx_new =  v * SIN(theta) * SIN(fi) 
            vy_new = -v * COS(theta)
            vz_new =  v * SIN(theta) * COS(fi)
+
+           ax_new = 0.0_8
+           ay_new = 0.0_8
+
            tag_new = myobject%object_id_number
 
            IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -333,6 +359,10 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
            vx_new = -v * COS(theta)
            vy_new =  v * SIN(theta) * SIN(fi)
            vz_new =  v * SIN(theta) * COS(fi)
+
+           ax_new = 0.0_8
+           ay_new = 0.0_8
+
            tag_new = myobject%object_id_number
 
            IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -352,6 +382,10 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
            vx_new = v * SIN(theta) * SIN(fi) 
            vy_new = v * COS(theta)
            vz_new = v * SIN(theta) * COS(fi)
+
+           ax_new = 0.0_8
+           ay_new = 0.0_8
+
            tag_new = myobject%object_id_number
 
            IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -390,6 +424,10 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
            vx_new = -vx
            vy_new =  vy
            vz_new =  vz
+
+           ax_new = 0.0_8
+           ay_new = 0.0_8
+
            tag_new = myobject%object_id_number
 
            IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -408,6 +446,10 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
            vx_new =  vx
            vy_new = -vy
            vz_new =  vz
+
+           ax_new = 0.0_8
+           ay_new = 0.0_8
+
            tag_new = myobject%object_id_number
 
            IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -428,6 +470,10 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
            vx_new = -vx
            vy_new =  vy
            vz_new =  vz
+
+           ax_new = 0.0_8
+           ay_new = 0.0_8
+
            tag_new = myobject%object_id_number
 
            IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -446,6 +492,10 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
            vx_new =  vx
            vy_new = -vy
            vz_new =  vz
+
+           ax_new = 0.0_8
+           ay_new = 0.0_8
+
            tag_new = myobject%object_id_number
 
            IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -467,7 +517,8 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
 !     theta = 1.5707963_8 * well_random_number()                 ! note that 1.5707963 is sligtly less than the exact pi/2=1.5707963267949
 
  ! the distribution over angle theta angle is f(theta) = COS(theta)   
-        theta = ASIN(MIN(well_random_number(),1.0_8))              
+!        theta = ASIN(MIN(well_random_number(),1.0_8)) 
+        theta = ASIN( sqrt(MIN(well_random_number(),1.0_8)) )
         fi   = 6.283185307179_8 * well_random_number()
 
         IF (dirflag.EQ.1) THEN
@@ -477,6 +528,10 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
            vx_new = v * COS(theta)
            vy_new = v * SIN(theta) * SIN(fi)
            vz_new = v * SIN(theta) * COS(fi)
+
+           ax_new = 0.0_8
+           ay_new = 0.0_8
+
            tag_new = myobject%object_id_number
 
            IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -495,6 +550,10 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
            vx_new =  v * SIN(theta) * SIN(fi) 
            vy_new = -v * COS(theta)
            vz_new =  v * SIN(theta) * COS(fi)
+
+           ax_new = 0.0_8
+           ay_new = 0.0_8
+
            tag_new = myobject%object_id_number
 
            IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -515,6 +574,10 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
            vx_new = -v * COS(theta)
            vy_new =  v * SIN(theta) * SIN(fi)
            vz_new =  v * SIN(theta) * COS(fi)
+
+           ax_new = 0.0_8
+           ay_new = 0.0_8
+
            tag_new = myobject%object_id_number
 
            IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -533,6 +596,10 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
            vx_new = v * SIN(theta) * SIN(fi) 
            vy_new = v * COS(theta)
            vz_new = v * SIN(theta) * COS(fi)
+
+           ax_new = 0.0_8
+           ay_new = 0.0_8
+
            tag_new = myobject%object_id_number
 
            IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -550,7 +617,7 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
 
   END IF   ! IF (m.GT.0) THEN
 
-  CALL ADD_ELECTRON_TO_ADD_LIST(x_new, y_new, vx_new, vy_new, vz_new, tag_new)    ! the particle gets tag equal to nwo - the number of the whole object that emitted it
+  CALL ADD_ELECTRON_TO_ADD_LIST(x_new, y_new, vx_new, vy_new, vz_new, ax_new, ay_new, tag_new)    ! the particle gets tag equal to nwo - the number of the whole object that emitted it
 
   myobject%electron_emit_count = myobject%electron_emit_count + 1
 
@@ -586,6 +653,7 @@ SUBROUTINE INJECT_INELASTIC_BACKSCATTERED_ELECTRON(x, y, v, tag, myobject, m, di
   REAL(8) v_new                    ! scattered electron absolute velocity value
   REAL(8) x_new, y_new             ! scattered electron coordinates
   REAL(8) vx_new, vy_new, vz_new   ! scattered electron velocity components
+  REAL(8) ax_new, ay_new
   INTEGER tag_new                  ! scattered electron tag 
 
   INTEGER jbelow, jabove
@@ -605,7 +673,8 @@ SUBROUTINE INJECT_INELASTIC_BACKSCATTERED_ELECTRON(x, y, v, tag, myobject, m, di
 !     theta = 1.5707963_8 * well_random_number()                 ! note that 1.5707963 is sligtly less than the exact pi/2=1.5707963267949
 
  ! the distribution over angle theta angle is f(theta) = COS(theta)   
-  theta = ASIN(MIN(well_random_number(),1.0_8))              
+!  theta = ASIN(MIN(well_random_number(),1.0_8)) 
+  theta = ASIN( sqrt(MIN(well_random_number(),1.0_8)) )
   fi   = 6.283185307179_8 * well_random_number()
 
 ! get the absolute velocity of backscattered electron
@@ -621,6 +690,10 @@ SUBROUTINE INJECT_INELASTIC_BACKSCATTERED_ELECTRON(x, y, v, tag, myobject, m, di
         vx_new = v_new * COS(theta)
         vy_new = v_new * SIN(theta) * SIN(fi)
         vz_new = v_new * SIN(theta) * COS(fi)
+    
+        ax_new = 0.0_8
+        ay_new = 0.0_8
+
         tag_new = myobject%object_id_number
 
         IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -640,6 +713,10 @@ SUBROUTINE INJECT_INELASTIC_BACKSCATTERED_ELECTRON(x, y, v, tag, myobject, m, di
         vx_new =  v_new * SIN(theta) * SIN(fi) 
         vy_new = -v_new * COS(theta)
         vz_new =  v_new * SIN(theta) * COS(fi)
+
+        ax_new = 0.0_8
+        ay_new = 0.0_8
+
         tag_new = myobject%object_id_number
 
         IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -659,6 +736,10 @@ SUBROUTINE INJECT_INELASTIC_BACKSCATTERED_ELECTRON(x, y, v, tag, myobject, m, di
         vx_new = -v_new * COS(theta)
         vy_new =  v_new * SIN(theta) * SIN(fi)
         vz_new =  v_new * SIN(theta) * COS(fi)
+
+        ax_new = 0.0_8
+        ay_new = 0.0_8
+
         tag_new = myobject%object_id_number
 
         IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -678,6 +759,10 @@ SUBROUTINE INJECT_INELASTIC_BACKSCATTERED_ELECTRON(x, y, v, tag, myobject, m, di
         vx_new = v_new * SIN(theta) * SIN(fi) 
         vy_new = v_new * COS(theta)
         vz_new = v_new * SIN(theta) * COS(fi)
+
+        ax_new = 0.0_8
+        ay_new = 0.0_8
+
         tag_new = myobject%object_id_number
 
         IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -712,6 +797,10 @@ SUBROUTINE INJECT_INELASTIC_BACKSCATTERED_ELECTRON(x, y, v, tag, myobject, m, di
         vx_new = v_new * COS(theta)
         vy_new = v_new * SIN(theta) * SIN(fi)
         vz_new = v_new * SIN(theta) * COS(fi)
+
+        ax_new = 0.0_8
+        ay_new = 0.0_8
+
         tag_new = myobject%object_id_number
 
         IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -730,6 +819,10 @@ SUBROUTINE INJECT_INELASTIC_BACKSCATTERED_ELECTRON(x, y, v, tag, myobject, m, di
         vx_new =  v_new * SIN(theta) * SIN(fi) 
         vy_new = -v_new * COS(theta)
         vz_new =  v_new * SIN(theta) * COS(fi)
+
+        ax_new = 0.0_8
+        ay_new = 0.0_8
+
         tag_new = myobject%object_id_number
 
         IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -750,6 +843,10 @@ SUBROUTINE INJECT_INELASTIC_BACKSCATTERED_ELECTRON(x, y, v, tag, myobject, m, di
         vx_new = -v_new * COS(theta)
         vy_new =  v_new * SIN(theta) * SIN(fi)
         vz_new =  v_new * SIN(theta) * COS(fi)
+
+        ax_new = 0.0_8
+        ay_new = 0.0_8
+
         tag_new = myobject%object_id_number
 
         IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -768,6 +865,10 @@ SUBROUTINE INJECT_INELASTIC_BACKSCATTERED_ELECTRON(x, y, v, tag, myobject, m, di
         vx_new = v_new * SIN(theta) * SIN(fi) 
         vy_new = v_new * COS(theta)
         vz_new = v_new * SIN(theta) * COS(fi)
+
+        ax_new = 0.0_8
+        ay_new = 0.0_8
+
         tag_new = myobject%object_id_number
 
         IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -783,7 +884,7 @@ SUBROUTINE INJECT_INELASTIC_BACKSCATTERED_ELECTRON(x, y, v, tag, myobject, m, di
 
   END IF   ! IF (m.GT.0) THEN
 
-  CALL ADD_ELECTRON_TO_ADD_LIST(x_new, y_new, vx_new, vy_new, vz_new, tag_new)    ! the particle gets tag equal to nwo - the number of the whole object that emitted it
+  CALL ADD_ELECTRON_TO_ADD_LIST(x_new, y_new, vx_new, vy_new, vz_new, ax_new, ay_new, tag_new)    ! the particle gets tag equal to nwo - the number of the whole object that emitted it
 
   myobject%electron_emit_count = myobject%electron_emit_count + 1
 
@@ -816,6 +917,7 @@ SUBROUTINE INJECT_TRUE_SECONDARY_ELECTRON(x, y, energy_inc, tag, myobject, m, di
 
   REAL(8) x_new, y_new             ! emitted electron coordinates
   REAL(8) vx_new, vy_new, vz_new   ! emitted electron velocity components
+  REAL(8) ax_new, ay_new           ! for DI advance of electrons
   INTEGER tag_new                  ! emitted electron tag 
 
   INTEGER jbelow, jabove
@@ -848,6 +950,10 @@ SUBROUTINE INJECT_TRUE_SECONDARY_ELECTRON(x, y, energy_inc, tag, myobject, m, di
         vx_new = vx_new * myobject%factor_convert_seetrue_vinj
         vy_new = vy_new * myobject%factor_convert_seetrue_vinj
         vz_new = vz_new * myobject%factor_convert_seetrue_vinj
+
+        ax_new = 0.0_8
+        ay_new = 0.0_8
+
         tag_new = myobject%object_id_number
 
         IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -870,6 +976,10 @@ SUBROUTINE INJECT_TRUE_SECONDARY_ELECTRON(x, y, energy_inc, tag, myobject, m, di
         vx_new =  vx_new * myobject%factor_convert_seetrue_vinj
         vy_new = -vy_new * myobject%factor_convert_seetrue_vinj
         vz_new =  vz_new * myobject%factor_convert_seetrue_vinj
+
+        ax_new = 0.0_8
+        ay_new = 0.0_8
+
         tag_new = myobject%object_id_number
 
         IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -892,6 +1002,10 @@ SUBROUTINE INJECT_TRUE_SECONDARY_ELECTRON(x, y, energy_inc, tag, myobject, m, di
         vx_new = -vx_new * myobject%factor_convert_seetrue_vinj
         vy_new =  vy_new * myobject%factor_convert_seetrue_vinj
         vz_new =  vz_new * myobject%factor_convert_seetrue_vinj
+
+        ax_new = 0.0_8
+        ay_new = 0.0_8
+
         tag_new = myobject%object_id_number
 
         IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -914,6 +1028,10 @@ SUBROUTINE INJECT_TRUE_SECONDARY_ELECTRON(x, y, energy_inc, tag, myobject, m, di
         vx_new = vx_new * myobject%factor_convert_seetrue_vinj
         vy_new = vy_new * myobject%factor_convert_seetrue_vinj
         vz_new = vz_new * myobject%factor_convert_seetrue_vinj
+
+        ax_new = 0.0_8
+        ay_new = 0.0_8
+
         tag_new = myobject%object_id_number
 
         IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -946,11 +1064,15 @@ SUBROUTINE INJECT_TRUE_SECONDARY_ELECTRON(x, y, energy_inc, tag, myobject, m, di
         x_new = myobject%xmax + 1.0d-6
         y_new = y
         CALL GetInjMaxwellVelocity(vx_new)
-        CALL GetMaxwellVelocity(vy_new)
-        CALL GetMaxwellVelocity(vz_new)
+        CALL    GetMaxwellVelocity(vy_new)
+        CALL    GetMaxwellVelocity(vz_new)
         vx_new = vx_new * myobject%factor_convert_seetrue_vinj
         vy_new = vy_new * myobject%factor_convert_seetrue_vinj
         vz_new = vz_new * myobject%factor_convert_seetrue_vinj
+
+        ax_new = 0.0_8
+        ay_new = 0.0_8
+
         tag_new = myobject%object_id_number
 
         IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -972,6 +1094,10 @@ SUBROUTINE INJECT_TRUE_SECONDARY_ELECTRON(x, y, energy_inc, tag, myobject, m, di
         vx_new =  vx_new * myobject%factor_convert_seetrue_vinj
         vy_new = -vy_new * myobject%factor_convert_seetrue_vinj
         vz_new =  vz_new * myobject%factor_convert_seetrue_vinj
+
+        ax_new = 0.0_8
+        ay_new = 0.0_8
+
         tag_new = myobject%object_id_number
 
         IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -995,6 +1121,10 @@ SUBROUTINE INJECT_TRUE_SECONDARY_ELECTRON(x, y, energy_inc, tag, myobject, m, di
         vx_new = -vx_new * myobject%factor_convert_seetrue_vinj
         vy_new =  vy_new * myobject%factor_convert_seetrue_vinj
         vz_new =  vz_new * myobject%factor_convert_seetrue_vinj
+
+        ax_new = 0.0_8
+        ay_new = 0.0_8
+
         tag_new = myobject%object_id_number
 
         IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -1016,6 +1146,10 @@ SUBROUTINE INJECT_TRUE_SECONDARY_ELECTRON(x, y, energy_inc, tag, myobject, m, di
         vx_new = vx_new * myobject%factor_convert_seetrue_vinj
         vy_new = vy_new * myobject%factor_convert_seetrue_vinj
         vz_new = vz_new * myobject%factor_convert_seetrue_vinj
+
+        ax_new = 0.0_8
+        ay_new = 0.0_8
+
         tag_new = myobject%object_id_number
 
         IF (myobject%object_type.EQ.DIELECTRIC) THEN
@@ -1043,7 +1177,7 @@ SUBROUTINE INJECT_TRUE_SECONDARY_ELECTRON(x, y, energy_inc, tag, myobject, m, di
      energy_inc = energy_inc - energy_new
   END IF
 
-  CALL ADD_ELECTRON_TO_ADD_LIST(x_new, y_new, vx_new, vy_new, vz_new, tag_new)    ! the particle gets tag equal to nwo - the number of the whole object that emitted it
+  CALL ADD_ELECTRON_TO_ADD_LIST(x_new, y_new, vx_new, vy_new, vz_new, ax_new, ay_new, tag_new)    ! the particle gets tag equal to nwo - the number of the whole object that emitted it
 
   myobject%electron_emit_count = myobject%electron_emit_count + 1
 

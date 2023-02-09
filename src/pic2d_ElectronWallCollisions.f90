@@ -286,56 +286,6 @@ SUBROUTINE PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE(x, y, vx, vy, vz, tag)
 
 END SUBROUTINE PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE
 
-!------------------------------------------------------
-!
-SUBROUTINE COLLECT_ELECTRON_BOUNDARY_HITS
-
-  USE ParallelOperationValues
-  USE CurrentProblemValues
-  USE ClusterAndItsBoundaries
-  USE IonParticles, ONLY : N_spec
-
-  IMPLICIT NONE
-
-  INCLUDE 'mpif.h'
-
-  INTEGER ierr
-!  INTEGER stattus(MPI_STATUS_SIZE)
-!  INTEGER request
-
-  INTEGER, ALLOCATABLE :: ibuf_send(:)
-  INTEGER, ALLOCATABLE :: ibuf_receive(:)
-  INTEGER ALLOC_ERR
-
-  INTEGER k
-
-  ALLOCATE(ibuf_send(1:N_of_boundary_and_inner_objects), STAT = ALLOC_ERR)
-  ALLOCATE(ibuf_receive(1:N_of_boundary_and_inner_objects), STAT = ALLOC_ERR)
-
-! each cluster adjacent to a boundary assembles electron-boundary hit counters from all cluster members in the master of the cluster
-
-  ibuf_send(1:N_of_boundary_and_inner_objects) = whole_object(1:N_of_boundary_and_inner_objects)%electron_hit_count
-  ibuf_receive = 0
-
-  CALL MPI_REDUCE(ibuf_send, ibuf_receive, N_of_boundary_and_inner_objects, MPI_INTEGER, MPI_SUM, 0, MPI_COMM_WORLD, ierr)  !??? use Rank_of_bottom_left_cluster_master ???
-
-  IF (Rank_of_process.EQ.0) THEN
-! now counters from all processes are assembled in the process with global rank zero
-    
-     whole_object(1:N_of_boundary_and_inner_objects)%electron_hit_count = ibuf_receive(1:N_of_boundary_and_inner_objects)
-     print '("electrons hit boundaries :: ",10(2x,i8))', whole_object(1:N_of_boundary_and_inner_objects)%electron_hit_count  
-
-     DO k = 1, N_of_boundary_and_inner_objects
-        whole_object(k)%ion_hit_count(1:N_spec) = 0
-     END DO
-     
-  END IF
-
-  DEALLOCATE(ibuf_send, STAT = ALLOC_ERR)
-  DEALLOCATE(ibuf_receive, STAT = ALLOC_ERR)
-
-END SUBROUTINE COLLECT_ELECTRON_BOUNDARY_HITS
-
 !-------------------------------------------------------------------------------------------
 !
 SUBROUTINE INITIATE_WALL_DIAGNOSTICS
@@ -344,7 +294,7 @@ SUBROUTINE INITIATE_WALL_DIAGNOSTICS
   USE CurrentProblemValues, ONLY : N_of_boundary_and_inner_objects, Start_T_cntr
   USE Checkpoints, ONLY : use_checkpoint
 !  USE Diagnostics, ONLY : N_of_saved_records
-  USE SetupValues, ONLY : ht_use_e_emission_from_cathode, ht_use_e_emission_from_cathode_zerogradf, ht_emission_constant
+!  USE SetupValues, ONLY : ht_use_e_emission_from_cathode, ht_use_e_emission_from_cathode_zerogradf, ht_emission_constant
 
   IMPLICIT NONE
 
@@ -353,7 +303,7 @@ SUBROUTINE INITIATE_WALL_DIAGNOSTICS
 
   LOGICAL exists
   INTEGER i, k
-  INTEGER i_dummy, ios
+  INTEGER i_dummy
 
   INTERFACE
      FUNCTION convert_int_to_txt_string(int_number, length_of_string)
@@ -364,10 +314,6 @@ SUBROUTINE INITIATE_WALL_DIAGNOSTICS
   END INTERFACE
 
   IF (Rank_of_process.NE.0) RETURN
-
-  IF (ht_use_e_emission_from_cathode.OR.ht_use_e_emission_from_cathode_zerogradf.OR.ht_emission_constant) RETURN
-
-! hardwired for objects #2 (cathode) and #4 (anode)
 
   IF (use_checkpoint.EQ.1) THEN
 ! start from checkpoint, must trim the time dependences
@@ -380,12 +326,9 @@ SUBROUTINE INITIATE_WALL_DIAGNOSTICS
         INQUIRE (FILE = historybo_filename, EXIST = exists)
         IF (exists) THEN                                                       
            OPEN (21, FILE = historybo_filename, STATUS = 'OLD')          
-           DO !i = 1, Start_T_cntr   !N_of_saved_records             ! these files are updated at every electron timestep
-              READ (21, '(2x,i8,10(2x,i8))', iostat = ios) i_dummy
-              IF (ios.NE.0) EXIT
-              IF (i_dummy.GE.Start_T_cntr) EXIT
+           DO i = 1, Start_T_cntr   !N_of_saved_records             ! these files are updated at every electron timestep
+              READ (21, '(2x,i8,10(2x,i8))') i_dummy
            END DO
-           BACKSPACE(21)
            ENDFILE 21       
            CLOSE (21, STATUS = 'KEEP')        
         END IF
@@ -415,13 +358,11 @@ SUBROUTINE SAVE_BOUNDARY_PARTICLE_HITS_EMISSIONS
 
   USE ParallelOperationValues
   USE CurrentProblemValues
-  USE SetupValues, ONLY : ht_use_e_emission_from_cathode, ht_use_e_emission_from_cathode_zerogradf, ht_emission_constant
-  USE IonParticles, ONLY : N_spec, Qs
-  USE ExternalCircuit
+!  USE SetupValues, ONLY : ht_use_e_emission_from_cathode, ht_use_e_emission_from_cathode_zerogradf, ht_emission_constant
+  USE IonParticles, ONLY : N_spec
 
   IMPLICIT NONE
 
-  INTEGER nn, noi, s
   INTEGER k
                                     ! ----x----I----x--
   CHARACTER(17) historybo_filename  ! history_bo_NN.dat
@@ -436,16 +377,7 @@ SUBROUTINE SAVE_BOUNDARY_PARTICLE_HITS_EMISSIONS
 
   IF (Rank_of_process.NE.0) RETURN
 
-  IF (ht_use_e_emission_from_cathode.OR.ht_use_e_emission_from_cathode_zerogradf.OR.ht_emission_constant) RETURN
-
-  DO nn = 1, N_of_object_potentials_to_solve
-     noi = object_charge_calculation(1)%noi
-     dQ_plasma_of_object(nn) = -whole_object(noi)%electron_hit_count + &
-                             &  whole_object(noi)%electron_emit_count                      ! include electron emission
-     DO s = 1, N_spec
-        dQ_plasma_of_object(nn) = dQ_plasma_of_object(nn) + Qs(s) * whole_object(noi)%ion_hit_count(s)
-     END DO
-  END DO
+!  IF (ht_use_e_emission_from_cathode.OR.ht_use_e_emission_from_cathode_zerogradf.OR.ht_emission_constant) RETURN
 
   DO k = 1, N_of_boundary_and_inner_objects
 

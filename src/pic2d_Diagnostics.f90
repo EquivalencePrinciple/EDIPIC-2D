@@ -91,17 +91,16 @@ end subroutine save_electrons_suf
 
 !------------------------------------
 !
-subroutine save_rho_ei(suf)
+subroutine save_phi
 
   USE ParallelOperationValues
   USE CurrentProblemValues
-  USE BlockAndItsBoundaries
+  USE ClusterAndItsBoundaries
 
   implicit none
 
-  character(3) suf
-  character(22) rhoeproc_filename     ! rhoe_proc_NNNN_SUF.dat
-                                      ! ----x----I----x----I--
+  character(26) phiproc_filename     ! phi_proc_NNNN_TTTTTTTT.dat
+                                     ! ----x----I----x----I----x-
   integer i, j
   integer devid
 
@@ -113,84 +112,145 @@ subroutine save_rho_ei(suf)
      end function convert_int_to_txt_string
   end interface
 
-  rhoeproc_filename = 'rhoe_proc_NNNN_SUF.dat'
-  rhoeproc_filename(11:14) = convert_int_to_txt_string(Rank_of_process, 4)
-  rhoeproc_filename(16:18) = suf
-
-  devid = 9+Rank_of_process
-
-  open (devid, file=rhoeproc_filename)
-
-  do j = indx_y_min+1, indx_y_max-1
-     do i = indx_x_min+1, indx_x_max-1
-        write (devid, '(2x,i5,2x,i5,2(2x,e14.7))') &
-          & i, &
-          & j, &
-          & rho_e(i,j), &
-          & rho_i(i,j)
-     end do
-     write (devid, '(" ")')
-  end do
-  close (devid, status = 'keep')
-  
-  print '("file ",A22," is ready")', rhoeproc_filename
-
-end subroutine save_rho_ei
-
-!------------------------------------
-!
-subroutine save_phi(suf)
-
-  USE ParallelOperationValues
-  USE CurrentProblemValues
-  USE BlockAndItsBoundaries
-
-  implicit none
-
-  character(3) suf
-  character(21) phiproc_filename     ! phi_proc_NNNN_SUF.dat
-                                     ! ----x----I----x----I-
-  integer i, j
-  integer devid
-
-  interface
-     function convert_int_to_txt_string(int_number, length_of_string)
-       character*(length_of_string) convert_int_to_txt_string
-       integer int_number
-       integer length_of_string
-     end function convert_int_to_txt_string
-  end interface
+  if (cluster_rank_key.ne.0) return
 
 !real(8) phi_vs_ij         !############# removeme ################
 
-  phiproc_filename = 'phi_proc_NNNN_SUF.dat'
+  phiproc_filename = 'phi_proc_NNNN_TTTTTTTT.dat'
   phiproc_filename(10:13) = convert_int_to_txt_string(Rank_of_process, 4)
-  phiproc_filename(15:17) = suf
+  phiproc_filename(15:22) = convert_int_to_txt_string(T_cntr, 8)
 
   devid = 9+Rank_of_process
 
   open (devid, file=phiproc_filename)
 
-  do j = indx_y_min, indx_y_max
-     do i = indx_x_min, indx_x_max
+  do j = c_indx_y_min-1, c_indx_y_max+1
+     do i = c_indx_x_min-1, c_indx_x_max+1
 !        write (devid, '(2x,i5,2x,i5,2x,e14.7,2x,e14.7)') &
-        write (devid, '(2x,i5,2x,i5,2x,e14.7)') &
+        write (devid, '(2x,i5,2x,i5,3(2x,e14.7))') &
           & i, &
           & j, &
-          & phi(i,j) !, &
+          & i * delta_x_m, &
+          & j * delta_x_m, &
+          & c_phi_ext(i,j) * F_scale_V !, &
 !          & phi_vs_ij(i,j)        !############# removeme ################
      end do
      write (devid, '(" ")')
   end do
   close (devid, status = 'keep')
   
-  print '("file ",A21," is ready")', phiproc_filename
+  print '("file ",A26," is ready")', phiproc_filename
 
 end subroutine save_phi
 
 !------------------------------------
 !
-subroutine save_E(suf)
+subroutine save_EX
+
+  USE ParallelOperationValues
+  USE CurrentProblemValues
+  USE ClusterAndItsBoundaries
+
+  implicit none
+
+  character(25) exproc_filename     ! EX_proc_NNNN_TTTTTTTT.dat
+                                    ! ----x----I----x----I----x
+  integer i, j
+  integer devid
+
+  interface
+     function convert_int_to_txt_string(int_number, length_of_string)
+       character*(length_of_string) convert_int_to_txt_string
+       integer int_number
+       integer length_of_string
+     end function convert_int_to_txt_string
+  end interface
+
+  if (cluster_rank_key.ne.0) return
+
+!real(8) phi_vs_ij         !############# removeme ################
+
+  exproc_filename = 'EX_proc_NNNN_TTTTTTTT.dat'
+  exproc_filename(9:12) = convert_int_to_txt_string(Rank_of_process, 4)
+  exproc_filename(14:21) = convert_int_to_txt_string(T_cntr, 8)
+
+  devid = 9+Rank_of_process
+
+  open (devid, file=exproc_filename)
+
+  do j = c_indx_y_min, c_indx_y_max
+     do i = c_indx_x_min-1, c_indx_x_max
+!        write (devid, '(2x,i5,2x,i5,2x,e14.7,2x,e14.7)') &
+        write (devid, '(2x,i5,2x,i5,3(2x,e14.7))') &
+          & i, &
+          & j, &
+          & i * delta_x_m + 0.5 * delta_x_m, &
+          & j * delta_x_m, &
+          & EX(i,j) * F_scale_V
+     end do
+     write (devid, '(" ")')
+  end do
+  close (devid, status = 'keep')
+  
+  print '("file ",A25," is ready")', exproc_filename
+
+end subroutine save_EX
+!------------------------------------
+!
+subroutine save_EY
+
+  USE ParallelOperationValues
+  USE CurrentProblemValues
+  USE ClusterAndItsBoundaries
+
+  implicit none
+
+  character(25) eyproc_filename     ! EY_proc_NNNN_TTTTTTTT.dat
+                                    ! ----x----I----x----I----x
+  integer i, j
+  integer devid
+
+  interface
+     function convert_int_to_txt_string(int_number, length_of_string)
+       character*(length_of_string) convert_int_to_txt_string
+       integer int_number
+       integer length_of_string
+     end function convert_int_to_txt_string
+  end interface
+
+  if (cluster_rank_key.ne.0) return
+
+!real(8) phi_vs_ij         !############# removeme ################
+
+  eyproc_filename = 'EY_proc_NNNN_TTTTTTTT.dat'
+  eyproc_filename(9:12) = convert_int_to_txt_string(Rank_of_process, 4)
+  eyproc_filename(14:21) = convert_int_to_txt_string(T_cntr, 8)
+
+  devid = 9+Rank_of_process
+
+  open (devid, file=eyproc_filename)
+
+  do j = c_indx_y_min-1, c_indx_y_max
+     do i = c_indx_x_min, c_indx_x_max
+!        write (devid, '(2x,i5,2x,i5,2x,e14.7,2x,e14.7)') &
+        write (devid, '(2x,i5,2x,i5,3(2x,e14.7))') &
+          & i, &
+          & j, &
+          & i * delta_x_m, &
+          & j * delta_x_m + 0.5 * delta_x_m, &
+          & EY(i,j) * F_scale_V
+     end do
+     write (devid, '(" ")')
+  end do
+  close (devid, status = 'keep')
+  
+  print '("file ",A26," is ready")', eyproc_filename
+
+end subroutine save_EY
+
+!------------------------------------
+!
+subroutine save_2d_array(suf, nx1, nx2, ny1, ny2, myarr)
 
   USE ParallelOperationValues
   USE CurrentProblemValues
@@ -199,10 +259,13 @@ subroutine save_E(suf)
   implicit none
 
   character(3) suf
-  character(21) EXYproc_filename     ! EXY_proc_NNNN_SUF.dat
-                                     ! ----x----I----x----I-
+  character(26) sufproc_filename     ! SUF_proc_NNNN_TTTTTTTT.dat
+                                     ! ----x----I----x----I----x-
   integer i, j
   integer devid
+
+  integer nx1, nx2, ny1, ny2
+  real(8) myarr(nx1:nx2, ny1:ny2)
 
   interface
      function convert_int_to_txt_string(int_number, length_of_string)
@@ -212,32 +275,32 @@ subroutine save_E(suf)
      end function convert_int_to_txt_string
   end interface
 
-  if (cluster_rank_key.NE.0) return
-
-  EXYproc_filename = 'EXY_proc_NNNN_SUF.dat'
-  EXYproc_filename(10:13) = convert_int_to_txt_string(Rank_of_process, 4)
-  EXYproc_filename(15:17) = suf
+  sufproc_filename = 'suf_proc_NNNN_TTTTTTTT.dat'
+  sufproc_filename(1:3) = suf(1:3)
+  sufproc_filename(10:13) = convert_int_to_txt_string(Rank_of_process, 4)
+  sufproc_filename(15:22) = convert_int_to_txt_string(T_cntr, 8)
 
   devid = 9+Rank_of_process
 
-  open (devid, file=EXYproc_filename)
+  open (devid, file=sufproc_filename)
 
-  do j = c_indx_y_min, c_indx_y_max
-     do i = c_indx_x_min, c_indx_x_max
-        write (devid, '(2x,i5,2x,i5,2(2x,e14.7))') &
+  do j = ny1, ny2
+     do i = nx1, nx2
+!        write (devid, '(2x,i5,2x,i5,2x,e14.7,2x,e14.7)') &
+        write (devid, '(2x,i5,2x,i5,1(2x,e14.7))') &
           & i, &
           & j, &
-          & EX(i,j), &
-          & EY(i,j)  
+          & myarr(i,j)
      end do
      write (devid, '(" ")')
   end do
   close (devid, status = 'keep')
   
-  print '("file ",A21," is ready")', EXYproc_filename
+  print '("file ",A26," is ready")', sufproc_filename
 
-end subroutine save_E
+end subroutine save_2d_array
 
+!-----------------------
 !-------------------------------------------------------------------------------------------
 !
 SUBROUTINE INITIATE_GENERAL_DIAGNOSTICS
@@ -316,7 +379,7 @@ SUBROUTINE INITIATE_GENERAL_DIAGNOSTICS
 
 END SUBROUTINE INITIATE_GENERAL_DIAGNOSTICS
 
-!------------------------------
+!--------------------------------------------------------
 !
 subroutine report_total_number_of_particles
 
@@ -420,7 +483,8 @@ subroutine report_total_number_of_particles
 
         pos1=5
         pos2=8
-        DO s = 1, N_Spec
+
+        DO s = 1, N_spec
            PRINT '("Total : number of ion  ",i2,"  particles = ",i10," momentum X/Y/Z = ",3(2x,e16.9)," energy = ",e16.9)', s, N_particles_total(s), totpwbufer(pos1:pos2)
 
            history_i_filename = 'history_i_S.dat'

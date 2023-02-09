@@ -4,7 +4,7 @@
 REAL(8) FUNCTION frequency_of_en_collision(energy_eV, indx_neutral, colproc_id)
 
   USE MCCollisions
-  USE CurrentProblemValues, ONLY : V_scale_ms, m_e_kg, e_Cl, N_subcycles, delta_t_s 
+  USE CurrentProblemValues, ONLY : V_scale_ms, m_e_kg, e_Cl, N_subcycles, delta_t_s
 
   IMPLICIT NONE
 
@@ -13,15 +13,25 @@ REAL(8) FUNCTION frequency_of_en_collision(energy_eV, indx_neutral, colproc_id)
   INTEGER, INTENT(IN) :: colproc_id
 
   INTEGER N_crsect_points
-  REAL(8) f_temp
+  REAL(8) f_temp, aa, bb, energy_max
   INTEGER j
   REAL(8) energy_j_eV, energy_jp1_eV, f_j, f_jp1
 
   N_crsect_points = neutral(indx_neutral)%en_colproc(colproc_id)%N_crsect_points
+  energy_max = neutral(indx_neutral)%en_colproc(colproc_id)%energy_eV(N_crsect_points)
 
-  IF (energy_eV.GE.neutral(indx_neutral)%en_colproc(colproc_id)%energy_eV(N_crsect_points)) THEN
+  IF (energy_eV.GE.energy_max) THEN
 
+     bb = energy_eV / energy_max
      f_temp = neutral(indx_neutral)%en_colproc(colproc_id)%crsect_m2(N_crsect_points) * SQRT(2.0_8 * energy_eV * e_Cl / m_e_kg)
+     IF (neutral(indx_neutral)%en_colproc(colproc_id)%type.LT.20) THEN !extrapolate for elastic collisions
+        aa = (1.0_8 + log(bb)) / bb
+     ELSE
+        aa = 1.0_8 / bb !extrapolate for inelastic collisions
+     END IF
+     f_temp = f_temp * aa
+          
+!     f_temp = neutral(indx_neutral)%en_colproc(colproc_id)%crsect_m2(N_crsect_points) * SQRT(2.0_8 * energy_eV * e_Cl / m_e_kg)
 
   ELSE IF (energy_eV.LT.neutral(indx_neutral)%en_colproc(colproc_id)%energy_eV(1)) THEN
 
@@ -52,7 +62,7 @@ REAL(8) FUNCTION frequency_of_en_collision(energy_eV, indx_neutral, colproc_id)
 
   END IF
 
-  frequency_of_en_collision = f_temp * neutral(indx_neutral)%N_m3 * N_subcycles * delta_t_s 
+  frequency_of_en_collision = f_temp * neutral(indx_neutral)%N_m3 * N_subcycles * delta_t_s
 
 END FUNCTION frequency_of_en_collision
 
@@ -399,7 +409,7 @@ SUBROUTINE en_Collision_Ionization_30(indx_neutral, indx_particle, energy_inc_eV
 
   USE MCCollisions, ONLY : neutral
   USE ElectronParticles
-  USE SetupValues, ONLY : factor_convert_vion_i
+!  USE SetupValues, ONLY : factor_convert_vion_i
 !???  USE CurrentProblemValues
 !  USE ParallelOperationValues
 !???  USE Diagnostics, ONLY : Rate_energy_coll
@@ -436,6 +446,7 @@ SUBROUTINE en_Collision_Ionization_30(indx_neutral, indx_particle, energy_inc_eV
   REAL(8) Vx, Vy, Vz          ! velocity components of incident electron, before scattering
   REAL(8) Vx_sc, Vy_sc, Vz_sc ! velocity components of incident electron, after scattering
   REAL(8) Vx_ej, Vy_ej, Vz_ej ! velocity components of ejected electron
+  REAL(8) ax_ej, ay_ej, az_ej ! acceleration for DI advancing, can be set to 0
   REAL(8) Vx_i, Vy_i, Vz_i    ! velocity components of produced ion
   REAL(8) Ux, Uy, Uz          ! directed velocity components of neutrals
 
@@ -600,10 +611,10 @@ SUBROUTINE en_Collision_Ionization_30(indx_neutral, indx_particle, energy_inc_eV
   Vx_ej = Vx_ej * alpha
   Vy_ej = Vy_ej * alpha
   Vz_ej = Vz_ej * alpha
-
+  
 !print *, energy_inc_eV, ((Vx_sc**2+Vy_sc**2+Vz_sc**2)*T_e_eV/N_box_vel**2)/energy_sc_eV, ((Vx_ej**2+Vy_ej**2+Vz_ej**2)*T_e_eV/N_box_vel**2)/energy_ej_eV
 !print *, "en_Collision_Ionization_30 :: before ADD_ELECTRON_TO_ADD_LIST"
-  CALL ADD_ELECTRON_TO_ADD_LIST(electron(indx_particle)%X, electron(indx_particle)%Y, Vx_ej, Vy_ej, Vz_ej, 0)   ! tag=0
+  CALL ADD_ELECTRON_TO_ADD_LIST(electron(indx_particle)%X, electron(indx_particle)%Y, Vx_ej, Vy_ej, Vz_ej, 0.0_8, 0.0_8, 0)   ! tag=0, real(8) zeros are x- and y- accelerations
 !print *, "en_Collision_Ionization_30 :: after ADD_ELECTRON_TO_ADD_LIST"
 !??? diagnostics
 !     N_inject(1) = N_inject(1) + 1
@@ -632,7 +643,7 @@ SUBROUTINE en_Collision_Ionization_30(indx_neutral, indx_particle, energy_inc_eV
 
 !print *, "en_Collision_Ionization_30 :: before ADD_ION_TO_ADD_LIST"
 
-  CALL ADD_ION_TO_ADD_LIST(ion_species_produced, electron(indx_particle)%X, electron(indx_particle)%Y, Vx_i, Vy_i, Vz_i, 0)   ! tag=0
+  CALL ADD_ION_TO_ADD_LIST(ion_species_produced, electron(indx_particle)%X, electron(indx_particle)%Y, Vx_i, Vy_i, Vz_i, 0.0_8, 0.0_8, 0)   ! tag=0, real(8) zeros are x- and y- accelerations
 !??? diagnostics
 !print *, "en_Collision_Ionization_30 :: after ADD_ION_TO_ADD_LIST"
 
