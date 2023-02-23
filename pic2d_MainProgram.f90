@@ -60,8 +60,8 @@ PROGRAM MainProg
 
   CALL INITIATE_PROBE_DIAGNOSTICS
 
-!###  CALL INITIATE_WALL_DIAGNOSTICS_HT_SETUP   ! only one of the two actually works
-  CALL INITIATE_WALL_DIAGNOSTICS            !
+  CALL INITIATE_WALL_DIAGNOSTICS_HT_SETUP   ! only one of the two actually works
+  !   CALL INITIATE_WALL_DIAGNOSTICS            !
 
   CALL INITIATE_GENERAL_DIAGNOSTICS
 
@@ -292,8 +292,8 @@ PROGRAM MainProg
 
         CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
 
-!###        CALL PERFORM_IONIZATION_HT_SETUP
-!        CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+        CALL PERFORM_IONIZATION_HT_SETUP           ! ionization source in HT setup
+        CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)     ! comment if above is commented
 
         t14 = MPI_WTIME()
 
@@ -347,10 +347,10 @@ PROGRAM MainProg
 
      CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
 
-!###     CALL PERFORM_ELECTRON_EMISSION_HT_SETUP        ! either this or
+     CALL PERFORM_ELECTRON_EMISSION_HT_SETUP        ! either this or
                                                     ! PERFORM_ELECTRON_EMISSION_HT_SETUP_ZERO_GRAD_F (called above) works
                                                     ! not both
-     CALL PERFORM_ELECTRON_EMISSION_SETUP           ! this works for non-HT setup
+     !   CALL PERFORM_ELECTRON_EMISSION_SETUP           ! this works for non-HT setup
 
      CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
 
@@ -366,8 +366,8 @@ PROGRAM MainProg
 
      t18 = MPI_WTIME()
 
-!###     CALL SAVE_BOUNDARY_PARTICLE_HITS_EMISSIONS_HT_SETUP  ! only one of the two will work
-     CALL SAVE_BOUNDARY_PARTICLE_HITS_EMISSIONS           ! 
+     CALL SAVE_BOUNDARY_PARTICLE_HITS_EMISSIONS_HT_SETUP  ! only one of the two will work
+     !   CALL SAVE_BOUNDARY_PARTICLE_HITS_EMISSIONS           ! 
 
      CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
 
