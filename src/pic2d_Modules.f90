@@ -499,6 +499,12 @@ MODULE IonParticles
   REAL(8), ALLOCATABLE :: init_Ti_eV(:)                   ! initial ion temperature [eV]
   REAL(8), ALLOCATABLE :: init_NiNe(:)                    ! initial relative density
 
+  ! NEW ADDITION : arrays to hold initial directed ion velocities [in units of ion thermal speed for specific species]
+  REAL(8), ALLOCATABLE :: init_Uxi(:)  
+  REAL(8), ALLOCATABLE :: init_Uyi(:)
+  REAL(8), ALLOCATABLE :: init_Uzi(:)
+  !--------------------------    
+
   REAL(8), ALLOCATABLE :: Ms(:) !(1:N_spec)               ! Mi/me
   REAL(8), ALLOCATABLE :: QM2s(:) !(1:N_spec)             ! (q/e)(me/Mi)/2
   REAL(8), ALLOCATABLE :: QM2sNsub(:) !(1:N_spec)         ! (q/e)(me/Mi)(N_subcycles/2)
@@ -1041,6 +1047,9 @@ MODULE MCCollisions
      REAL(8) M_amu
      REAL(8) N_m3
      REAL(8) T_K
+     REAL(8) Ux         ! neutral directed velocity [units of neutral thermal speed]
+     REAL(8) Uy
+     REAL(8) Uz
      INTEGER N_en_colproc
      INTEGER N_of_energy_segments
      TYPE(collision_type), ALLOCATABLE :: en_colproc(:)

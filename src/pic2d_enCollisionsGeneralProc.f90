@@ -42,6 +42,8 @@ SUBROUTINE INITIATE_ELECTRON_NEUTRAL_COLLISIONS
 ! functions
   REAL(8) frequency_of_en_collision
 
+  CHARACTER(6) name_check ! check if neutral name in init_neutrals_velocity.dat matches with index
+
   INTERFACE
      FUNCTION convert_int_to_txt_string(int_number, length_of_string)
        CHARACTER*(length_of_string) convert_int_to_txt_string
@@ -85,6 +87,45 @@ SUBROUTINE INITIATE_ELECTRON_NEUTRAL_COLLISIONS
      READ (9, '(5x,f7.1)') neutral(n)%T_K
   END DO
   CLOSE (9, STATUS = 'KEEP')
+
+
+! specify velocities of neutral species
+
+  INQUIRE (FILE = 'init_neutrals_velocity.dat', EXIST = exists)
+
+  IF (.NOT.exists) THEN
+     IF (Rank_of_process.EQ.0) PRINT '("### file init_neutrals_velocity.dat not found, neutrals assumed to have zero bulk velocity ###")'
+     DO n = 1, N_neutral_spec
+        neutral(n)%Ux = 0.0_8
+        neutral(n)%Uy = 0.0_8
+        neutral(n)%Uz = 0.0_8
+     END DO
+  END IF
+
+  IF (exists) THEN
+     IF (Rank_of_process.EQ.0) PRINT '("### file init_neutrals_velocity.dat found ###")'
+     OPEN (9, FILE = 'init_neutrals_velocity.dat')
+
+     DO n = 1, N_neutral_spec
+        READ (9, '(A1)') buf !------AAAAAA--- code/abbreviation of the neutral gas, character string
+        READ (9, '(6x,A6)') name_check
+
+        IF (name_check.NE.neutral(n)%name) THEN
+            IF (Rank_of_process.EQ.0) PRINT '("### ERROR: neutral gas name not matching with corresponding neutral index from init_neutrals.dat, neutral velocities listed out of order! ###")'
+            CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+        END IF
+
+        READ (9, '(A1)') buf !----ddddd.dd--- Ux [units of neutral thermal velocity]
+        READ (9, '(4x,f8.2)') neutral(n)%Ux
+        READ (9, '(A1)') buf !----ddddd.dd--- Uy [units of neutral thermal velocity]
+        READ (9, '(4x,f8.2)') neutral(n)%Uy
+        READ (9, '(A1)') buf !----ddddd.dd--- Uz [units of neutral thermal velocity]
+        READ (9, '(4x,f8.2)') neutral(n)%Uz
+     END DO
+     
+     CLOSE (9, STATUS = 'KEEP')
+  END IF
+
 
 !CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
 !print *, "read init_neutrals.dat"

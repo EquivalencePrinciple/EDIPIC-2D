@@ -397,7 +397,7 @@ END SUBROUTINE en_Collision_Inelastic_20
 !
 SUBROUTINE en_Collision_Ionization_30(indx_neutral, indx_particle, energy_inc_eV, threshold_energy_eV, ion_species_produced, ion_velocity_factor, counter)
 
-!  USE MCCollisions
+  USE MCCollisions, ONLY : neutral
   USE ElectronParticles
   USE SetupValues, ONLY : factor_convert_vion_i
 !???  USE CurrentProblemValues
@@ -437,6 +437,7 @@ SUBROUTINE en_Collision_Ionization_30(indx_neutral, indx_particle, energy_inc_eV
   REAL(8) Vx_sc, Vy_sc, Vz_sc ! velocity components of incident electron, after scattering
   REAL(8) Vx_ej, Vy_ej, Vz_ej ! velocity components of ejected electron
   REAL(8) Vx_i, Vy_i, Vz_i    ! velocity components of produced ion
+  REAL(8) Ux, Uy, Uz          ! directed velocity components of neutrals
 
   REAL(8) alpha            
 
@@ -617,12 +618,17 @@ SUBROUTINE en_Collision_Ionization_30(indx_neutral, indx_particle, energy_inc_eV
 ! Take random velocity from normalized maxwell distribution  
   CALL GetMaxwellVelocity(Vx_i) 
   CALL GetMaxwellVelocity(Vy_i) 
-  CALL GetMaxwellVelocity(Vz_i) 
+  CALL GetMaxwellVelocity(Vz_i)
+
+! Grab neutral directed velocity
+  Ux = neutral(indx_neutral)%Ux
+  Uy = neutral(indx_neutral)%Uy
+  Uz = neutral(indx_neutral)%Uz 
 
 ! Use the factor above to obtain the dim-less velocity (V * N_box_vel / V_te) of the produced ion
-  Vx_i = Vx_i * ion_velocity_factor !factor_convert_vion_i(ion_species_produced)  !alpha_Vscl
-  Vy_i = Vy_i * ion_velocity_factor !factor_convert_vion_i(ion_species_produced)  !alpha_Vscl
-  Vz_i = Vz_i * ion_velocity_factor !factor_convert_vion_i(ion_species_produced)  !alpha_Vscl
+  Vx_i = (Vx_i + Ux) * ion_velocity_factor !factor_convert_vion_i(ion_species_produced)  !alpha_Vscl
+  Vy_i = (Vy_i + Uy) * ion_velocity_factor !factor_convert_vion_i(ion_species_produced)  !alpha_Vscl
+  Vz_i = (Vz_i + Uz) * ion_velocity_factor !factor_convert_vion_i(ion_species_produced)  !alpha_Vscl
 
 !print *, "en_Collision_Ionization_30 :: before ADD_ION_TO_ADD_LIST"
 

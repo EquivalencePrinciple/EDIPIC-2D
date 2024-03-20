@@ -67,6 +67,7 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
 
   real(8) vx, vy, vz, vsq, energy_eV, vabs_ms
   real(8) probab_rcx
+  real(8) Ux, Uy, Uz 
 
 ! functions
   real(8) neutral_density_normalized, sigma_rcx_m2
@@ -89,6 +90,10 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
      alpha =        neutral(n)%alpha_rcx
      probab_rcx_therm_2  = (collision_rcx(s)%probab_thermal)**2
 
+     Ux = neutral(n)%Ux
+     Uy = neutral(n)%Uy
+     Uz = neutral(n)%Uz
+
      factor_eV = Ms(s) * energy_factor_eV         ! instead of collision_rcx(s)%factor_eV
      vfactor = collision_rcx(s)%vfactor           ! to convert Maxwellian sample
      prob_factor = ngas_m3 * delta_t_s * N_subcycles
@@ -100,7 +105,7 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
         vx = ion(s)%part(i)%VX
         vy = ion(s)%part(i)%VY
         vz = ion(s)%part(i)%VZ
-        vsq = vx**2 + vy**2 +vz**2
+        vsq = (vx - (Ux * vfactor))**2 + (vy - (Uy * vfactor))**2 + (vz - (Uz * vfactor))**2
         energy_eV = vsq * factor_eV
         vabs_ms = sqrt(vsq) * V_scale_ms 
 
@@ -113,9 +118,9 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
            call GetMaxwellVelocity(VX)
            call GetMaxwellVelocity(VY)
            call GetMaxwellVelocity(VZ)
-           ion(s)%part(i)%VX = VX * vfactor
-           ion(s)%part(i)%VY = VY * vfactor
-           ion(s)%part(i)%VZ = VZ * vfactor
+           ion(s)%part(i)%VX = (VX + Ux) * vfactor ! After ion - neu collision, resample ion velocity from Maxwellian drifting at netraul bulk velocity U and neutral temperature
+           ion(s)%part(i)%VY = (VY + Uy) * vfactor
+           ion(s)%part(i)%VZ = (VZ + Uz) * vfactor
 !           ion(s)%part(k)%tag = CXtag
            collision_rcx(s)%counter = collision_rcx(s)%counter + 1
 !        else

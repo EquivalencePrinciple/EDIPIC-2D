@@ -1032,6 +1032,42 @@ if (Rank_of_process.eq.0) print *, "SET_CLUSTER_STRUCTURE done"
 
   CLOSE (9, STATUS = 'KEEP')
 
+! NEW FILE ADDED: read in initial directed ion velocities from init_particles_velocity.dat
+  INQUIRE (FILE = 'init_particles_velocity.dat', EXIST = exists)
+  ALLOCATE(init_Uxi(1:N_spec), STAT = ALLOC_ERR)
+  ALLOCATE(init_Uyi(1:N_spec), STAT = ALLOC_ERR)
+  ALLOCATE(init_Uzi(1:N_spec), STAT = ALLOC_ERR)
+
+  IF (.NOT.exists) THEN
+     IF (Rank_of_process.EQ.0) PRINT '("### file init_particles_velocity.dat not found, ions assumed to have zero bulk initial velocity ###")'
+     DO s = 1, N_spec
+        init_Uxi(s) = 0.0_8
+        init_Uyi(s) = 0.0_8
+        init_Uzi(s) = 0.0_8
+     END DO
+  END IF
+
+  IF (exists) THEN
+     IF (Rank_of_process.EQ.0) PRINT '("### file init_particles_velocity.dat found ###")'
+     OPEN (9, FILE = 'init_particles_velocity.dat')
+
+     DO s = 1, N_spec
+        READ (9, '(A1)') buf !------AAAAAA--- code/abbreviation of the ion species, character string
+        READ (9, '(A1)') buf
+        READ (9, '(A1)') buf !----ddddd.dd--- Uxi [units of ion thermal speed]
+        READ (9, '(4x,f8.2)') init_Uxi(s)
+        READ (9, '(A1)') buf !----ddddd.dd--- Uyi [units of ion thermal speed]
+        READ (9, '(4x,f8.2)') init_Uyi(s)
+        READ (9, '(A1)') buf !----ddddd.dd--- Uzi [units of ion thermal speed]
+        READ (9, '(4x,f8.2)') init_Uzi(s)
+     END DO
+     
+     CLOSE (9, STATUS = 'KEEP')
+  END IF
+
+! --------------------------------------------
+
+
 ! now we know N_spec, so we can allocate ion hit counters in wall objects
   DO n = 1, N_of_boundary_and_inner_objects
      ALLOCATE(whole_object(n)%ion_hit_count(1:N_spec), STAT = ALLOC_ERR)
@@ -3179,6 +3215,8 @@ SUBROUTINE DISTRIBUTE_PARTICLES
 ! functions
   REAL(8) Bx, By, Bz, Ez
 
+  REAL(8) Uxi, Uyi, Uzi     ! ion initial directed velocity [units of ion thermal speed]
+
   IF (Rank_cluster.EQ.0) THEN
 
 ! initialize particles
@@ -3306,6 +3344,10 @@ SUBROUTINE DISTRIBUTE_PARTICLES
      DO s = 1, N_spec
 ! since electrons are distributed randomly and are not ordered, we simply use their coordinates
 
+        Uxi = init_Uxi(s)
+        Uyi = init_Uyi(s)
+        Uzi = init_Uzi(s)
+
         factor_convert = SQRT(init_Ti_eV(s) / T_e_eV) / (N_max_vel * SQRT(Ms(s)))
 
         DO k = 1, N_ions(s)
@@ -3314,13 +3356,14 @@ SUBROUTINE DISTRIBUTE_PARTICLES
            ion(s)%part(k)%Y = electron(pos)%Y
 
            CALL GetMaxwellVelocity(v)
-           ion(s)%part(k)%VX = v * factor_convert
+           ion(s)%part(k)%VX = (v + Uxi) * factor_convert
 
            CALL GetMaxwellVelocity(v)
-           ion(s)%part(k)%VY = v * factor_convert
+           ion(s)%part(k)%VY = (v + Uyi) * factor_convert
 
            CALL GetMaxwellVelocity(v)
-           ion(s)%part(k)%VZ = v * factor_convert
+           ion(s)%part(k)%VZ = (v + Uzi) * factor_convert
+           
            ion(s)%part(k)%tag = 0
         END DO
      END DO
