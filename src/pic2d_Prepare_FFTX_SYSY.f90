@@ -9,11 +9,12 @@ SUBROUTINE PREPARE_FFT_X
   USE ParallelFFTX
   USE ParallelOperationValues, ONLY : Rank_of_process, cluster_rank_key
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
 
-  INTEGER ierr
+  INTEGER errcode,ierr
 
   TYPE pair_of_comm_proc
      INTEGER proc1            ! rank of one process
@@ -200,7 +201,8 @@ SUBROUTINE PREPARE_FFT_X
         IF (k.EQ.max_comm_steps) THEN
 ! error, too many communication steps, something is wrong
            PRINT '("Process ",i4," :: Error in PREPARE_FFT_X, too many communication steps for transfer of density X-bands : k = ", i4)', Rank_of_process, k
-           CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+           errcode=360
+           CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
         END IF
      END IF
   END DO
@@ -333,11 +335,12 @@ SUBROUTINE PREPARE_SYS_Y
   USE ParallelFFTX
   USE SetupValues, ONLY : ht_grid_requested, grid_j
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
 
-  INTEGER ierr
+  INTEGER errcode,ierr
   INTEGER stattus(MPI_STATUS_SIZE)
   INTEGER request
 
@@ -503,7 +506,8 @@ SUBROUTINE PREPARE_SYS_Y
            IF (k.EQ.max_comm_steps) THEN
 ! error, too many communication steps, something is wrong
               PRINT '("Process ",i4," :: Error in PREPARE_SYS_Y, too many communication steps for transfer of density X-bands : k = ", i4)', Rank_of_process, k
-              CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+              errcode=361
+              CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
            END IF
         END IF
      END DO
@@ -590,7 +594,7 @@ SUBROUTINE PREPARE_SYS_Y
            ibufer(5) = field_calculator(k)%sysy_strip_nmin
            ibufer(6) = field_calculator(k)%sysy_strip_nmax
 
-           CALL MPI_SEND(ibufer, 6, MPI_INTEGER, field_calculator(k)%rank, Rank_of_process, MPI_COMM_WORLD, request, ierr) 
+           CALL MPI_SEND(ibufer, 6, MPI_INTEGER, field_calculator(k)%rank, Rank_of_process, MPI_COMM_WORLD, ierr) 
         END DO
 
      END IF

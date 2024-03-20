@@ -6,11 +6,12 @@ SUBROUTINE PROCESS_ELECTRON_COLL_WITH_BOUNDARY_LEFT(x, y, vx, vy, vz, tag)
   USE ClusterAndItsBoundaries
   USE CurrentProblemValues, ONLY : whole_object, VACUUM_GAP, METAL_WALL, DIELECTRIC
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
 
-  INTEGER ierr
+  INTEGER errcode,ierr
 
   REAL(8) x, y, vx, vy, vz
   INTEGER tag
@@ -65,7 +66,8 @@ SUBROUTINE PROCESS_ELECTRON_COLL_WITH_BOUNDARY_LEFT(x, y, vx, vy, vz, tag)
   IF (particle_not_processed) THEN
      PRINT '("Process ",i4,": ERROR in PROCESS_ELECTRON_COLL_WITH_BOUNDARY_LEFT")', Rank_of_process
      PRINT '("particle x= ",e14.7," y= ",e14.7)', x, y
-     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+     errcode=240
+     CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
   END IF
 
 END SUBROUTINE PROCESS_ELECTRON_COLL_WITH_BOUNDARY_LEFT
@@ -78,11 +80,12 @@ SUBROUTINE PROCESS_ELECTRON_COLL_WITH_BOUNDARY_RIGHT(x, y, vx, vy, vz, tag)
   USE ClusterAndItsBoundaries
   USE CurrentProblemValues, ONLY : whole_object, VACUUM_GAP, METAL_WALL, DIELECTRIC
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
 
-  INTEGER ierr
+  INTEGER errcode,ierr
 
   REAL(8) x, y, vx, vy, vz
   INTEGER tag
@@ -137,7 +140,8 @@ SUBROUTINE PROCESS_ELECTRON_COLL_WITH_BOUNDARY_RIGHT(x, y, vx, vy, vz, tag)
   IF (particle_not_processed) THEN
      PRINT '("Process ",i4,": ERROR in PROCESS_ELECTRON_COLL_WITH_BOUNDARY_RIGHT")', Rank_of_process
      PRINT '("particle x= ",e14.7," y= ",e14.7)', x, y
-     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+     errcode=241
+     CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
   END IF
 
 END SUBROUTINE PROCESS_ELECTRON_COLL_WITH_BOUNDARY_RIGHT
@@ -150,11 +154,12 @@ SUBROUTINE PROCESS_ELECTRON_COLL_WITH_BOUNDARY_BELOW(x, y, vx, vy, vz, tag)
   USE ClusterAndItsBoundaries
   USE CurrentProblemValues, ONLY : whole_object, VACUUM_GAP, METAL_WALL, DIELECTRIC
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
 
-  INTEGER ierr
+  INTEGER errcode,ierr
 
   REAL(8) x, y, vx, vy, vz
   INTEGER tag
@@ -209,7 +214,8 @@ SUBROUTINE PROCESS_ELECTRON_COLL_WITH_BOUNDARY_BELOW(x, y, vx, vy, vz, tag)
   IF (particle_not_processed) THEN
      PRINT '("Process ",i4,": ERROR in PROCESS_ELECTRON_COLL_WITH_BOUNDARY_BELOW")', Rank_of_process
      PRINT '("particle x= ",e14.7," y= ",e14.7)', x, y
-     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+     errcode=242
+     CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
   END IF
 
 END SUBROUTINE PROCESS_ELECTRON_COLL_WITH_BOUNDARY_BELOW
@@ -222,11 +228,12 @@ SUBROUTINE PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE(x, y, vx, vy, vz, tag)
   USE ClusterAndItsBoundaries
   USE CurrentProblemValues, ONLY : whole_object, VACUUM_GAP, METAL_WALL, DIELECTRIC
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
 
-  INTEGER ierr
+  INTEGER errcode,ierr
 
   REAL(8) x, y, vx, vy, vz
   INTEGER tag
@@ -281,7 +288,8 @@ SUBROUTINE PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE(x, y, vx, vy, vz, tag)
   IF (particle_not_processed) THEN
      PRINT '("Process ",i4,": ERROR in PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE")', Rank_of_process
      PRINT '("particle x= ",e14.7," y= ",e14.7)', x, y
-     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+     errcode=243
+     CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
   END IF
 
 END SUBROUTINE PROCESS_ELECTRON_COLL_WITH_BOUNDARY_ABOVE
@@ -295,9 +303,10 @@ SUBROUTINE COLLECT_ELECTRON_BOUNDARY_HITS
   USE ClusterAndItsBoundaries
   USE IonParticles, ONLY : N_spec
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
 
   INTEGER ierr
 !  INTEGER stattus(MPI_STATUS_SIZE)
@@ -345,6 +354,8 @@ SUBROUTINE INITIATE_WALL_DIAGNOSTICS
   USE Checkpoints, ONLY : use_checkpoint
 !  USE Diagnostics, ONLY : N_of_saved_records
   USE SetupValues, ONLY : ht_use_e_emission_from_cathode, ht_use_e_emission_from_cathode_zerogradf, ht_emission_constant
+
+  use mpi
 
   IMPLICIT NONE
 
@@ -419,6 +430,8 @@ SUBROUTINE SAVE_BOUNDARY_PARTICLE_HITS_EMISSIONS
   USE IonParticles, ONLY : N_spec, Qs
   USE ExternalCircuit
 
+  use mpi
+
   IMPLICIT NONE
 
   INTEGER nn, noi, s
@@ -473,11 +486,12 @@ SUBROUTINE TRY_ELECTRON_COLL_WITH_INNER_OBJECT(x, y, vx, vy, vz, tag) !, myobjec
   USE ClusterAndItsBoundaries
   USE CurrentProblemValues !, ONLY : inner_object, METAL_WALL, DIELECTRIC
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
 
-  INTEGER ierr
+  INTEGER errcode,ierr
 
 !  INTEGER nio  ! number of the inner object
   REAL(8) x, y, vx, vy, vz
@@ -532,7 +546,8 @@ SUBROUTINE TRY_ELECTRON_COLL_WITH_INNER_OBJECT(x, y, vx, vy, vz, tag) !, myobjec
    
   IF (mcross.EQ.-1) THEN
      PRINT '("Error-1 in TRY_ELECTRON_COLL_WITH_INNER_OBJECT ",4(2x,f10.4))', xorg, yorg, x, y
-     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+     errcode=244
+     CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
   END IF
 
   SELECT CASE (mcross)
@@ -563,6 +578,8 @@ SUBROUTINE DO_ELECTRON_COLL_WITH_INNER_OBJECT(x, y, vx, vy, vz, tag, myobject, c
   USE ParallelOperationValues
   USE ClusterAndItsBoundaries
   USE CurrentProblemValues !, ONLY : inner_object, METAL_WALL, DIELECTRIC
+
+  use mpi
 
   IMPLICIT NONE
 
@@ -649,6 +666,8 @@ END SUBROUTINE DO_ELECTRON_COLL_WITH_INNER_OBJECT
 SUBROUTINE FIND_CLOSEST_INTERSECTION_WITH_OBJECT(xorg, yorg, x, y, n, mcross, xcross, ycross, distorg)
 
   USE CurrentProblemValues !, ONLY : inner_object, METAL_WALL, DIELECTRIC
+
+  use mpi
 
   IMPLICIT NONE
 
@@ -748,6 +767,8 @@ SUBROUTINE CHECK_INTERSECTION_WITH_VERTICAL_SEGMENT( xorg, yorg, x, y, xseg, ymi
 
   use, intrinsic :: ieee_arithmetic
 
+  use mpi
+
   IMPLICIT NONE
 
   REAL(8), INTENT(IN) :: xorg, yorg, x, y          ! coordinates of the ends of particle trajectory segment
@@ -791,6 +812,8 @@ END SUBROUTINE CHECK_INTERSECTION_WITH_VERTICAL_SEGMENT
 SUBROUTINE CHECK_INTERSECTION_WITH_HORIZONTAL_SEGMENT( xorg, yorg, x, y, yseg, xminseg, xmaxseg, mystatus, xcross )
 
   use, intrinsic :: ieee_arithmetic
+
+  use mpi
 
   IMPLICIT NONE
 
@@ -837,11 +860,12 @@ SUBROUTINE PrepareMaxwellDistribIntegral
   USE ParallelOperationValues
   USE MaxwellVelocity
 !  USE CurrentProblemValues, ONLY : N_box_vel
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
 
-  INTEGER ierr
+  INTEGER errcode,ierr
 
   INTEGER i
   INTEGER N_pnts
@@ -923,7 +947,8 @@ SUBROUTINE PrepareMaxwellDistribIntegral
      PRINT '(2x,"Process ",i3," : ERROR in PrepareMaxwellDistribIntegral !!!")', Rank_of_process
      PRINT '(2x,"The initialization in PrepareMaxwellDistribIntegral is not performed !!!")'
      PRINT '(2x,"The program will be terminated now :(")'
-     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+     errcode=245
+     CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
   END IF
 
 END SUBROUTINE PrepareMaxwellDistribIntegral
@@ -935,6 +960,8 @@ SUBROUTINE GetInjMaxwellVelocity(U)
   USE MaxwellVelocity
  
   USE rng_wrapper
+
+  use mpi
 
   IMPLICIT NONE
 
@@ -964,6 +991,8 @@ SUBROUTINE GetMaxwellVelocity(U)
 
   USE rng_wrapper
 
+  use mpi
+
   IMPLICIT NONE
 
   REAL(8) U
@@ -988,6 +1017,8 @@ END SUBROUTINE GetMaxwellVelocity
 !
 REAL(8) FUNCTION vector_product_z(ax, ay, bx, by)
 
+  use mpi
+
   IMPLICIT NONE
   REAL(8) ax, ay, bx, by
 
@@ -1001,6 +1032,8 @@ SUBROUTINE ADD_ELECTRON_TO_BO_COLLS_LIST(coll_coord, vx, vy, vz, tag, nwo, nseg)
 
   USE CurrentProblemValues, ONLY : e_colls_with_bo
   USE Snapshots
+
+  use mpi
 
   IMPLICIT NONE
 

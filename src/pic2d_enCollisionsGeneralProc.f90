@@ -10,11 +10,11 @@ SUBROUTINE INITIATE_ELECTRON_NEUTRAL_COLLISIONS
   USE IonParticles, ONLY : N_spec, Ms
 !  USE ClusterAndItsBoundaries
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
-
-  INTEGER ierr
+  INTEGER errcode,ierr
  
   LOGICAL exists
 
@@ -219,7 +219,8 @@ SUBROUTINE INITIATE_ELECTRON_NEUTRAL_COLLISIONS
         IF (.NOT.exists) THEN
            IF (Rank_of_process.EQ.0) PRINT '("###ERROR :: file ",A49," not found, for neutrals ",A6," while collisions ",i2," of type ",i2," are activated, program terminated")', &
                 & initneutral_crsect_filename, neutral(n)%name, p, neutral(n)%en_colproc(p)%type
-           CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+           errcode=430
+           CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
         END IF
 
         OPEN(9, FILE = initneutral_crsect_filename)
@@ -304,7 +305,8 @@ SUBROUTINE INITIATE_ELECTRON_NEUTRAL_COLLISIONS
      IF (collision_e_neutral(n)%N_of_energy_values.NE.collision_e_neutral(n)%energy_segment_boundary_index(collision_e_neutral(n)%N_of_energy_segments)) THEN
 ! error
         PRINT '("error")'
-        CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+        errcode=431
+        CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
      END IF
 
 ! create array of energy values corresponding to the probability array
@@ -383,11 +385,11 @@ SUBROUTINE PERFORM_ELECTRON_NEUTRAL_COLLISIONS
 
 !  USE ParallelOperationValues
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
-
-  INTEGER ierr
+  INTEGER errcode,ierr
   INTEGER stattus(MPI_STATUS_SIZE)
   INTEGER request
 
@@ -505,13 +507,27 @@ SUBROUTINE PERFORM_ELECTRON_NEUTRAL_COLLISIONS
               END IF
            END DO
            indx_energy =              collision_e_neutral(n)%energy_segment_boundary_index(indx_segment-1) + &
-                       & (energy_eV - collision_e_neutral(n)%energy_segment_boundary_value(indx_segment-1)) / collision_e_neutral(n)%energy_segment_step(indx_segment)
+                  & INT( (energy_eV - collision_e_neutral(n)%energy_segment_boundary_value(indx_segment-1)) / collision_e_neutral(n)%energy_segment_step(indx_segment) )
+! limiter for safety
            indx_energy = MAX(0, MIN(indx_energy, collision_e_neutral(n)%N_of_energy_values-1))
-! double check
+! additional safety (new)
+           IF (energy_eV.LT.collision_e_neutral(n)%energy_eV(indx_energy)) indx_energy = indx_energy - 1
+           IF (energy_eV.GT.collision_e_neutral(n)%energy_eV(indx_energy+1)) indx_energy = indx_energy + 1
+           indx_energy = MAX(0, MIN(indx_energy, collision_e_neutral(n)%N_of_energy_values-1))
+! final check
            IF ((energy_eV.LT.collision_e_neutral(n)%energy_eV(indx_energy)).OR.(energy_eV.GT.collision_e_neutral(n)%energy_eV(indx_energy+1))) THEN
 ! error
-              PRINT '("Proc ",i4," error in PERFORM_ELECTRON_NEUTRAL_COLLISIONS")', Rank_of_process
-              CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+!              PRINT '("Proc ",i4," error in PERFORM_ELECTRON_NEUTRAL_COLLISIONS")', Rank_of_process
+! expanded error message (new)
+              PRINT '("Proc ",i4," error in PERFORM_ELECTRON_NEUTRAL_COLLISIONS: ",e10.3,2(1x,i6),2(1x,i10),5(1x,e10.3),2x,e12.5)', &
+                      & Rank_of_process, energy_eV, &
+                      & indx_segment, indx_energy, &
+                      & random_j, N_electrons, &
+                      & electron(random_j)%VX, electron(random_j)%VY, electron(random_j)%VZ, &
+                      & collision_e_neutral(n)%energy_eV(indx_energy), collision_e_neutral(n)%energy_eV(indx_energy+1), &
+                      & energy_eV-collision_e_neutral(n)%energy_eV(indx_energy)
+              errcode=432
+              CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
            END IF
            a1 = (energy_eV - collision_e_neutral(n)%energy_eV(indx_energy)) / collision_e_neutral(n)%energy_segment_step(indx_segment)
            a0 = 1.0_8 - a1
@@ -806,9 +822,9 @@ SUBROUTINE SAVE_en_COLLISIONS
   USE ElectronParticles, ONLY : N_electrons
   USE CurrentProblemValues, ONLY : T_cntr
 
-  IMPLICIT NONE
+  use mpi
 
-  INCLUDE 'mpif.h'
+  IMPLICIT NONE
 
   INTEGER ierr
   INTEGER stattus(MPI_STATUS_SIZE)
@@ -1109,9 +1125,9 @@ SUBROUTINE COLLECT_ELECTRON_DENSITY_FOR_COLL_FREQS
   USE AvgSnapshots
   USE CurrentProblemValues, ONLY : T_cntr
 
-  IMPLICIT NONE
+  use mpi
 
-  INCLUDE 'mpif.h'
+  IMPLICIT NONE
 
   INTEGER ierr
   INTEGER stattus(MPI_STATUS_SIZE)
@@ -1207,9 +1223,9 @@ SUBROUTINE SYNCHRONIZE_REAL_ARRAY_IN_OVERLAP_NODES(arr)
   USE ParallelOperationValues
   USE ClusterAndItsBoundaries
 
-  IMPLICIT NONE
+  use mpi
 
-  INCLUDE 'mpif.h'
+  IMPLICIT NONE
 
   INTEGER ierr
   INTEGER stattus(MPI_STATUS_SIZE)
@@ -1244,7 +1260,7 @@ SUBROUTINE SYNCHRONIZE_REAL_ARRAY_IN_OVERLAP_NODES(arr)
         pos2=n1
         rbufer(pos1:pos2) = arr(c_indx_x_max, c_indx_y_min:c_indx_y_max)
 
-        CALL MPI_SEND(rbufer, n1, MPI_REAL, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+        CALL MPI_SEND(rbufer, n1, MPI_REAL, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, ierr) 
      END IF
 
      IF (Rank_horizontal_left.GE.0) THEN
@@ -1253,7 +1269,7 @@ SUBROUTINE SYNCHRONIZE_REAL_ARRAY_IN_OVERLAP_NODES(arr)
         pos2=n1
         rbufer(pos1:pos2) = arr(c_indx_x_min, c_indx_y_min:c_indx_y_max)
 
-        CALL MPI_SEND(rbufer, n1, MPI_REAL, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+        CALL MPI_SEND(rbufer, n1, MPI_REAL, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, ierr) 
      END IF
 
      IF (Rank_horizontal_left.GE.0) THEN
@@ -1285,7 +1301,7 @@ SUBROUTINE SYNCHRONIZE_REAL_ARRAY_IN_OVERLAP_NODES(arr)
         pos2=n3
         rbufer(pos1:pos2) = arr(c_indx_x_min:c_indx_x_max, c_indx_y_max)
 
-        CALL MPI_SEND(rbufer, n3, MPI_REAL, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+        CALL MPI_SEND(rbufer, n3, MPI_REAL, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, ierr) 
      END IF
 
      IF (Rank_horizontal_below.GE.0) THEN
@@ -1294,7 +1310,7 @@ SUBROUTINE SYNCHRONIZE_REAL_ARRAY_IN_OVERLAP_NODES(arr)
         pos2=n3
         rbufer(pos1:pos2) = arr(c_indx_x_min:c_indx_x_max, c_indx_y_min)
 
-        CALL MPI_SEND(rbufer, n3, MPI_REAL, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+        CALL MPI_SEND(rbufer, n3, MPI_REAL, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, ierr) 
      END IF
 
      IF (Rank_horizontal_below.GE.0) THEN
@@ -1349,7 +1365,7 @@ SUBROUTINE SYNCHRONIZE_REAL_ARRAY_IN_OVERLAP_NODES(arr)
         pos2=n1
         rbufer(pos1:pos2) = arr(c_indx_x_max, c_indx_y_min:c_indx_y_max)
 
-        CALL MPI_SEND(rbufer, n1, MPI_REAL, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+        CALL MPI_SEND(rbufer, n1, MPI_REAL, Rank_horizontal_right, Rank_horizontal, COMM_HORIZONTAL, ierr) 
      END IF
 
      IF (Rank_horizontal_left.GE.0) THEN
@@ -1358,7 +1374,7 @@ SUBROUTINE SYNCHRONIZE_REAL_ARRAY_IN_OVERLAP_NODES(arr)
         pos2=n1
         rbufer(pos1:pos2) = arr(c_indx_x_min, c_indx_y_min:c_indx_y_max)
 
-        CALL MPI_SEND(rbufer, n1, MPI_REAL, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+        CALL MPI_SEND(rbufer, n1, MPI_REAL, Rank_horizontal_left, Rank_horizontal, COMM_HORIZONTAL, ierr) 
      END IF
 
      IF (ALLOCATED(rbufer)) DEALLOCATE(rbufer, STAT=ALLOC_ERR)
@@ -1388,7 +1404,7 @@ SUBROUTINE SYNCHRONIZE_REAL_ARRAY_IN_OVERLAP_NODES(arr)
         pos2=n3
         rbufer(pos1:pos2) = arr(c_indx_x_min:c_indx_x_max, c_indx_y_max)
 
-        CALL MPI_SEND(rbufer, n3, MPI_REAL, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+        CALL MPI_SEND(rbufer, n3, MPI_REAL, Rank_horizontal_above, Rank_horizontal, COMM_HORIZONTAL, ierr) 
      END IF
 
      IF (Rank_horizontal_below.GE.0) THEN
@@ -1397,7 +1413,7 @@ SUBROUTINE SYNCHRONIZE_REAL_ARRAY_IN_OVERLAP_NODES(arr)
         pos2=n3
         rbufer(pos1:pos2) = arr(c_indx_x_min:c_indx_x_max, c_indx_y_min)
 
-        CALL MPI_SEND(rbufer, n3, MPI_REAL, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+        CALL MPI_SEND(rbufer, n3, MPI_REAL, Rank_horizontal_below, Rank_horizontal, COMM_HORIZONTAL, ierr) 
      END IF
 
   END IF   !###   IF (WHITE_CLUSTER) THEN

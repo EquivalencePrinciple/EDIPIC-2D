@@ -10,9 +10,10 @@ SUBROUTINE ADVANCE_IONS_PLUS
   USE IonParticles, ONLY : N_spec, N_ions_to_send_left, N_ions_to_send_right, N_ions_to_send_above, N_ions_to_send_below
   USE Diagnostics, ONLY : Save_probes_i_data_T_cntr
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
 
   INTEGER ierr
 
@@ -189,13 +190,14 @@ SUBROUTINE ADVANCE_IONS_AND_CALCULATE_MOMENTS_2D(s)
   USE Diagnostics
 !------------------------------------------<<<
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
 
   INTEGER, INTENT(IN) :: s
 
-  INTEGER ierr
+  INTEGER errcode,ierr
   INTEGER stattus(MPI_STATUS_SIZE)
   INTEGER request
 
@@ -316,7 +318,8 @@ SUBROUTINE ADVANCE_IONS_AND_CALCULATE_MOMENTS_2D(s)
         print '("Process ",i4," : Error-1 in ADVANCE_IONS : particle out of bounds xmin/xmax/ymin/ymax : ",4(2x,e14.7))', Rank_of_process, c_X_area_min, c_X_area_max, c_Y_area_min, c_Y_area_max
         print '("Process ",i4," : s/k/N_ions(s) : ",i3,2x,i8,2x,i8)', Rank_of_process, s, k, N_ions(s)
         print '("Process ",i4," : x/y/vx/vy/vz/tag : ",5(2x,e14.7),2x,i4)', Rank_of_process, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag
-        CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+        errcode=300
+        CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
      end if
 
 ! interpolate electric field
@@ -332,7 +335,8 @@ SUBROUTINE ADVANCE_IONS_AND_CALCULATE_MOMENTS_2D(s)
         print '("Process ",i4," : s/k/N_ions(s) : ",i3,2x,i8,2x,i8)', Rank_of_process, s, k, N_ions(s)
         print '("Process ",i4," : x/y/vx/vy/vz/tag : ",5(2x,e14.7),2x,i4)', Rank_of_process, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag
         print '("Process ",i4," : minx/maxx/miny/maxy : ",4(2x,e14.7))', Rank_of_process, c_X_area_min, c_X_area_max, c_Y_area_min, c_Y_area_max
-        CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+        errcode=301
+        CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
      end if
 
      ax_ip1 = ion(s)%part(k)%X - DBLE(i)
@@ -661,7 +665,8 @@ SUBROUTINE ADVANCE_IONS_AND_CALCULATE_MOMENTS_2D(s)
         ELSE
 ! ERROR, we shouldn't be here
            PRINT '("ERROR-1 in ADVANCE_IONS: we should not be here")'
-           CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+           errcode=302
+           CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
         END IF
 
         CALL REMOVE_ION(s, k)  ! this subroutine does  N_ions(s) = N_ions(s) - 1 and k = k-1
@@ -782,7 +787,8 @@ SUBROUTINE ADVANCE_IONS_AND_CALCULATE_MOMENTS_2D(s)
         ELSE
 ! ERROR, we shouldn't be here
            PRINT '("ERROR-2 in ADVANCE_IONS: we should not be here")'
-           CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+           errcode=303
+           CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
         END IF   !###   IF ( (ion(s)%part(k)%Y.GE.(c_Y_area_min+1.0_8)).AND.(ion(s)%part(k)%Y.LE.(c_Y_area_max-1.0_8)) ) THEN
 
         CALL REMOVE_ION(s, k)  !       this subroutine does  N_ions(s) = N_ions(s) - 1 and k = k-1
@@ -1037,11 +1043,12 @@ SUBROUTINE ADVANCE_IONS_AND_CALCULATE_MOMENTS_PROBES
   
   USE Diagnostics
   
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
 
-  INTEGER ierr
+  INTEGER errcode,ierr
 
 !------------------------------------------>>>
   INTEGER bufsize
@@ -1117,7 +1124,8 @@ SUBROUTINE ADVANCE_IONS_AND_CALCULATE_MOMENTS_PROBES
            print '("Process ",i4," : Error-1 in ADVANCE_IONS : particle out of bounds xmin/xmax/ymin/ymax : ",4(2x,e14.7))', Rank_of_process, c_X_area_min, c_X_area_max, c_Y_area_min, c_Y_area_max
            print '("Process ",i4," : s/k/N_ions(s) : ",i3,2x,i8,2x,i8)', Rank_of_process, s, k, N_ions(s)
            print '("Process ",i4," : x/y/vx/vy/vz/tag : ",5(2x,e14.7),2x,i4)', Rank_of_process, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag
-           CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+           errcode=304
+           CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
         end if
 
 ! interpolate electric field
@@ -1133,7 +1141,8 @@ SUBROUTINE ADVANCE_IONS_AND_CALCULATE_MOMENTS_PROBES
            print '("Process ",i4," : s/k/N_ions(s) : ",i3,2x,i8,2x,i8)', Rank_of_process, s, k, N_ions(s)
            print '("Process ",i4," : x/y/vx/vy/vz/tag : ",5(2x,e14.7),2x,i4)', Rank_of_process, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag
            print '("Process ",i4," : minx/maxx/miny/maxy : ",4(2x,e14.7))', Rank_of_process, c_X_area_min, c_X_area_max, c_Y_area_min, c_Y_area_max
-           CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+           errcode=305
+           CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
         end if
 
         ax_ip1 = ion(s)%part(k)%X - DBLE(i)
@@ -1436,7 +1445,8 @@ SUBROUTINE ADVANCE_IONS_AND_CALCULATE_MOMENTS_PROBES
            ELSE
 ! ERROR, we shouldn't be here
               PRINT '("ERROR-1 in ADVANCE_IONS: we should not be here")'
-              CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+              errcode=306
+              CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
            END IF
 
            CALL REMOVE_ION(s, k)  ! this subroutine does  N_ions(s) = N_ions(s) - 1 and k = k-1
@@ -1557,7 +1567,8 @@ SUBROUTINE ADVANCE_IONS_AND_CALCULATE_MOMENTS_PROBES
            ELSE
 ! ERROR, we shouldn't be here
               PRINT '("ERROR-2 in ADVANCE_IONS: we should not be here")'
-              CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+              errcode=307
+              CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
            END IF
 
            CALL REMOVE_ION(s, k)  !       this subroutine does  N_ions(s) = N_ions(s) - 1 and k = k-1

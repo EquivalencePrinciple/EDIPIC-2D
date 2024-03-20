@@ -109,11 +109,11 @@ SUBROUTINE IDENTIFY_BLOCK_BOUNDARIES
   USE CurrentProblemValues
   USE BlockAndItsBoundaries
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
-
-  INTEGER ierr
+  INTEGER errcode,ierr
 
   INTEGER n, m
   INTEGER jstart, jend, istart, iend
@@ -154,7 +154,8 @@ SUBROUTINE IDENTIFY_BLOCK_BOUNDARIES
                  N_of_local_object_parts = N_of_local_object_parts + 1
                  IF (N_of_local_object_parts.GT.max_N_of_local_object_parts) THEN
                     PRINT '("Process ",i4," : ERROR-1 in IDENTIFY_BLOCK_BOUNDARIES : maximal number of boundary parts exceeded : ",i4)', Rank_of_process, N_of_local_object_parts
-                    CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+                    errcode=100
+                    CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
                  END IF
                  local_object_part(N_of_local_object_parts)%object_number = n
                  local_object_part(N_of_local_object_parts)%istart = indx_x_min
@@ -188,7 +189,8 @@ SUBROUTINE IDENTIFY_BLOCK_BOUNDARIES
                  N_of_local_object_parts = N_of_local_object_parts + 1
                  IF (N_of_local_object_parts.GT.max_N_of_local_object_parts) THEN
                     PRINT '("Process ",i4," : ERROR-2 in IDENTIFY_BLOCK_BOUNDARIES : maximal number of boundary parts exceeded : ",i4)', Rank_of_process, N_of_local_object_parts
-                    CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+                    errcode=101
+                    CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
                  END IF
                  local_object_part(N_of_local_object_parts)%object_number = n
                  local_object_part(N_of_local_object_parts)%istart = istart
@@ -219,7 +221,8 @@ SUBROUTINE IDENTIFY_BLOCK_BOUNDARIES
                  N_of_local_object_parts = N_of_local_object_parts + 1
                  IF (N_of_local_object_parts.GT.max_N_of_local_object_parts) THEN
                     PRINT '("Process ",i4," : ERROR-3 in IDENTIFY_BLOCK_BOUNDARIES : maximal number of boundary parts exceeded : ",i4)', Rank_of_process, N_of_local_object_parts
-                    CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+                    errcode=102
+                    CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
                  END IF
                  local_object_part(N_of_local_object_parts)%object_number = n
                  local_object_part(N_of_local_object_parts)%istart = indx_x_max
@@ -250,7 +253,8 @@ SUBROUTINE IDENTIFY_BLOCK_BOUNDARIES
                  N_of_local_object_parts = N_of_local_object_parts + 1
                  IF (N_of_local_object_parts.GT.max_N_of_local_object_parts) THEN
                     PRINT '("Process ",i4," : ERROR-4 in IDENTIFY_BLOCK_BOUNDARIES : maximal number of boundary parts exceeded : ",i4)', Rank_of_process, N_of_local_object_parts
-                    CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+                    errcode=103
+                    CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
                  END IF
                  local_object_part(N_of_local_object_parts)%object_number = n
                  local_object_part(N_of_local_object_parts)%istart = istart
@@ -280,11 +284,11 @@ SUBROUTINE INCLUDE_BLOCK_PERIODICITY
   USE CurrentProblemValues
   USE BlockAndItsBoundaries
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
-
-  INTEGER ierr
+  INTEGER errcode,ierr
   INTEGER stattus(MPI_STATUS_SIZE)
   INTEGER request
 
@@ -378,7 +382,8 @@ SUBROUTINE INCLUDE_BLOCK_PERIODICITY
            IF (.NOT.pair_found) THEN
 ! error message if the pair is not found
               PRINT '("Process ",i4," :: Error in INCLUDE_BLOCK_PERIODICITY :: cannot find a matching pair for X-periodic boundary of process ",i4)', Rank_of_process, n
-              CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+              errcode=104
+              CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
            END IF
         END IF
      END DO
@@ -400,14 +405,15 @@ SUBROUTINE INCLUDE_BLOCK_PERIODICITY
            IF (.NOT.pair_found) THEN
 ! error message if the pair is not found
               PRINT '("Process ",i4," :: Error in INCLUDE_BLOCK_PERIODICITY :: cannot find a matching pair for Y-periodic boundary of process ",i4)', Rank_of_process, n
-              CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+              errcode=105
+              CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
            END IF
         END IF
      END DO
 
      ! send  information about periodicity pairs to each process
      DO n = 1, N_of_processes-1
-        CALL MPI_SEND(all_periodic_messages(13:14,n), 2, MPI_INTEGER, n, Rank_of_process, MPI_COMM_WORLD, request, ierr)        
+        CALL MPI_SEND(all_periodic_messages(13:14,n), 2, MPI_INTEGER, n, Rank_of_process, MPI_COMM_WORLD, ierr)        
      END DO
      
 ! process own periodicity pair info
@@ -437,7 +443,7 @@ SUBROUTINE INCLUDE_BLOCK_PERIODICITY
   ELSE
      
 ! send periodic_message to zero-rank process
-     CALL MPI_SEND(periodic_message, 12, MPI_INTEGER, 0, Rank_of_process, MPI_COMM_WORLD, request, ierr)
+     CALL MPI_SEND(periodic_message, 12, MPI_INTEGER, 0, Rank_of_process, MPI_COMM_WORLD, ierr)
      
 ! receive information about periodicity pairs
      CALL MPI_RECV(ibufer(1:2), 2, MPI_INTEGER, 0, 0, MPI_COMM_WORLD, stattus, ierr) 
@@ -478,9 +484,9 @@ SUBROUTINE CALCULATE_BLOCK_OFFSET
   USE CurrentProblemValues
   USE BlockAndItsBoundaries
 
-  IMPLICIT NONE
+  use mpi
 
-  INCLUDE 'mpif.h'
+  IMPLICIT NONE
 
   INTEGER ierr
   INTEGER stattus(MPI_STATUS_SIZE)
@@ -547,7 +553,7 @@ SUBROUTINE CALCULATE_BLOCK_OFFSET
         IF (Rank_of_process_below.LT.0) bottom_right_inner_node = bottom_right_inner_node + N_of_nodes_to_solve_x  ! skip line of nodes along the bottom boundary
         ibufer(1) = bottom_right_inner_node
         ibufer(2) = N_of_nodes_to_solve_x
-        CALL MPI_SEND(ibufer, 2, MPI_INTEGER, Rank_of_process_right, Rank_of_process, MPI_COMM_WORLD, request, ierr) 
+        CALL MPI_SEND(ibufer, 2, MPI_INTEGER, Rank_of_process_right, Rank_of_process, MPI_COMM_WORLD, ierr) 
      END IF
 
      IF (Rank_of_process_left.GE.0) THEN
@@ -556,7 +562,7 @@ SUBROUTINE CALCULATE_BLOCK_OFFSET
         IF (Rank_of_process_below.LT.0) bottom_left_inner_node = bottom_left_inner_node + N_of_nodes_to_solve_x  ! skip line of nodes along the bottom boundary
         ibufer(1) = bottom_left_inner_node
         ibufer(2) = N_of_nodes_to_solve_x
-        CALL MPI_SEND(ibufer, 2, MPI_INTEGER, Rank_of_process_left, Rank_of_process, MPI_COMM_WORLD, request, ierr)
+        CALL MPI_SEND(ibufer, 2, MPI_INTEGER, Rank_of_process_left, Rank_of_process, MPI_COMM_WORLD, ierr)
      END IF
 
      IF (Rank_of_process_left.GE.0) THEN
@@ -578,7 +584,7 @@ SUBROUTINE CALCULATE_BLOCK_OFFSET
         left_top_inner_node = global_offset + N_of_nodes_to_solve_x * (N_of_nodes_to_solve_y-1) + 1
         IF (Rank_of_process_left.LT.0) left_top_inner_node = left_top_inner_node + 1  ! skip the node at the left boundary
         ibufer(1) = left_top_inner_node
-        CALL MPI_SEND(ibufer(1), 1, MPI_INTEGER, Rank_of_process_above, Rank_of_process, MPI_COMM_WORLD, request, ierr) 
+        CALL MPI_SEND(ibufer(1), 1, MPI_INTEGER, Rank_of_process_above, Rank_of_process, MPI_COMM_WORLD, ierr) 
      END IF
 
      IF (Rank_of_process_below.GE.0) THEN
@@ -586,7 +592,7 @@ SUBROUTINE CALCULATE_BLOCK_OFFSET
         left_bottom_inner_node = global_offset + 1
         IF (Rank_of_process_left.LT.0) left_bottom_inner_node = left_bottom_inner_node + 1  ! skip the node at the left boundary
         ibufer(1) = left_bottom_inner_node
-        CALL MPI_SEND(ibufer(1), 1, MPI_INTEGER, Rank_of_process_below, Rank_of_process, MPI_COMM_WORLD, request, ierr) 
+        CALL MPI_SEND(ibufer(1), 1, MPI_INTEGER, Rank_of_process_below, Rank_of_process, MPI_COMM_WORLD, ierr) 
      END IF
 
      IF (Rank_of_process_below.GE.0) THEN
@@ -623,7 +629,7 @@ SUBROUTINE CALCULATE_BLOCK_OFFSET
         IF (Rank_of_process_below.LT.0) bottom_right_inner_node = bottom_right_inner_node + N_of_nodes_to_solve_x  ! skip line of nodes along the bottom boundary
         ibufer(1) = bottom_right_inner_node
         ibufer(2) = N_of_nodes_to_solve_x
-        CALL MPI_SEND(ibufer, 2, MPI_INTEGER, Rank_of_process_right, Rank_of_process, MPI_COMM_WORLD, request, ierr) 
+        CALL MPI_SEND(ibufer, 2, MPI_INTEGER, Rank_of_process_right, Rank_of_process, MPI_COMM_WORLD, ierr) 
      END IF
 
      IF (Rank_of_process_left.GE.0) THEN
@@ -632,7 +638,7 @@ SUBROUTINE CALCULATE_BLOCK_OFFSET
         IF (Rank_of_process_below.LT.0) bottom_left_inner_node = bottom_left_inner_node + N_of_nodes_to_solve_x  ! skip line of nodes along the bottom boundary
         ibufer(1) = bottom_left_inner_node
         ibufer(2) = N_of_nodes_to_solve_x
-        CALL MPI_SEND(ibufer, 2, MPI_INTEGER, Rank_of_process_left, Rank_of_process, MPI_COMM_WORLD, request, ierr)
+        CALL MPI_SEND(ibufer, 2, MPI_INTEGER, Rank_of_process_left, Rank_of_process, MPI_COMM_WORLD, ierr)
      END IF
 
      IF (Rank_of_process_below.GE.0) THEN
@@ -652,7 +658,7 @@ SUBROUTINE CALCULATE_BLOCK_OFFSET
         left_top_inner_node = global_offset + N_of_nodes_to_solve_x * (N_of_nodes_to_solve_y-1) + 1
         IF (Rank_of_process_left.LT.0) left_top_inner_node = left_top_inner_node + 1  ! skip the node at the left boundary
         ibufer(1) = left_top_inner_node
-        CALL MPI_SEND(ibufer(1), 1, MPI_INTEGER, Rank_of_process_above, Rank_of_process, MPI_COMM_WORLD, request, ierr) 
+        CALL MPI_SEND(ibufer(1), 1, MPI_INTEGER, Rank_of_process_above, Rank_of_process, MPI_COMM_WORLD, ierr) 
      END IF
 
      IF (Rank_of_process_below.GE.0) THEN
@@ -660,7 +666,7 @@ SUBROUTINE CALCULATE_BLOCK_OFFSET
         left_bottom_inner_node = global_offset + 1
         IF (Rank_of_process_left.LT.0) left_bottom_inner_node = left_bottom_inner_node + 1  ! skip the node at the left boundary
         ibufer(1) = left_bottom_inner_node
-        CALL MPI_SEND(ibufer(1), 1, MPI_INTEGER, Rank_of_process_below, Rank_of_process, MPI_COMM_WORLD, request, ierr) 
+        CALL MPI_SEND(ibufer(1), 1, MPI_INTEGER, Rank_of_process_below, Rank_of_process, MPI_COMM_WORLD, ierr) 
      END IF
 
   END IF
@@ -673,11 +679,11 @@ SUBROUTINE ANALYZE_BOUNDARY_OBJECTS
 
   USE CurrentProblemValues
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
-
-  INTEGER ierr
+  INTEGER errcode,ierr
 
   INTEGER nobj, nseg
   LOGICAL connection_found
@@ -725,7 +731,8 @@ SUBROUTINE ANALYZE_BOUNDARY_OBJECTS
         IF (.NOT.connection_found) THEN
            PRINT '("ERROR :: cannot find connection for the start point of object ",i4," segment ",i4," with i/j= ",2(2x,i6))', &
                 & nobj, nseg, whole_object(nobj)%segment(nseg)%istart, whole_object(nobj)%segment(nseg)%jstart
-           CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+           errcode=106
+           CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
         END IF
 
         n = connected_object
@@ -743,7 +750,8 @@ SUBROUTINE ANALYZE_BOUNDARY_OBJECTS
 ! vectors iv1 and iv2 (i.e. the two segments) are parallel, this should not happen
               PRINT '("ERROR :: boundary object ",i4," has segments ",i4," and ",i4," connected and parallel")', &
                 & nobj, nseg, m
-              CALL MPI_ABORT(MPI_COMM_WORLD, ierr)           
+              errcode=107
+              CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
            ELSE
 ! vectors iv1 and iv2 (i.e. the two segments) are orthogonal
 !### presently, it is assumed that this is a CONCAVE_CORNER, which works in a RECTANGULAR DOMAIN ONLY
@@ -794,7 +802,8 @@ SUBROUTINE ANALYZE_BOUNDARY_OBJECTS
         IF (.NOT.connection_found) THEN
            PRINT '("ERROR :: cannot find connection for the end point of object ",i4," segment ",i4," with i/j= ",2(2x,i6))', &
                 & nobj, nseg, whole_object(nobj)%segment(nseg)%iend, whole_object(nobj)%segment(nseg)%jend
-           CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+           errcode=108
+           CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
         END IF
 
         n = connected_object
@@ -812,7 +821,8 @@ SUBROUTINE ANALYZE_BOUNDARY_OBJECTS
 ! vectors iv1 and iv2 (i.e. the two segments) are parallel, this should not happen
               PRINT '("ERROR :: boundary object ",i4," has segments ",i4," and ",i4," connected and parallel")', &
                 & nobj, nseg, m
-              CALL MPI_ABORT(MPI_COMM_WORLD, ierr)           
+              errcode=109
+              CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
            ELSE
 ! vectors iv1 and iv2 (i.e. the two segments) are orthogonal
 !### presently, it is assumed that this is a CONCAVE_CORNER, which works in a RECTANGULAR DOMAIN ONLY

@@ -10,11 +10,11 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
   USE IonParticles, ONLY : N_spec
   USE Checkpoints, ONLY : use_checkpoint
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
-
-  INTEGER ierr
+  INTEGER errcode,ierr
   INTEGER stattus(MPI_STATUS_SIZE)
   INTEGER request
 
@@ -101,7 +101,8 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
      READ (9, *, IOSTAT=IOS) temp_pos(1,n), temp_pos(2,n)
      IF (IOS.NE.0) THEN
         PRINT '(2x,"Process ",i5," :: INITIATE_PROBE_DIAGNOSTICS : ERROR-1 : while reading file init_probes.dat : wrong coordinates of probe ",i4," program terminated.")', Rank_of_process, n
-        CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+        errcode=420
+        CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
      END IF
   END DO
 
@@ -400,13 +401,13 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
 ! master sends to the associated field calculators number of its probes
         ibufer(1) = N_of_probes_cluster
         DO k = 2, cluster_N_blocks
-           CALL MPI_SEND(ibufer(1), 1, MPI_INTEGER, field_calculator(k)%rank, Rank_of_process, MPI_COMM_WORLD, request, ierr) 
+           CALL MPI_SEND(ibufer(1), 1, MPI_INTEGER, field_calculator(k)%rank, Rank_of_process, MPI_COMM_WORLD, ierr) 
         END DO
 
         IF (N_of_probes_cluster.GT.0) THEN
 ! master sends to the associated field calculators a list of its probes
            DO k = 2, cluster_N_blocks
-              CALL MPI_SEND(List_of_probes_cluster(1:N_of_probes_cluster), N_of_probes_cluster, MPI_INTEGER, field_calculator(k)%rank, Rank_of_process+100000, MPI_COMM_WORLD, request, ierr) 
+              CALL MPI_SEND(List_of_probes_cluster(1:N_of_probes_cluster), N_of_probes_cluster, MPI_INTEGER, field_calculator(k)%rank, Rank_of_process+100000, MPI_COMM_WORLD, ierr) 
            END DO
 ! receive number of probes in each block
            ALLOCATE(diag_block(2:cluster_N_blocks), STAT = ALLOC_ERR)
@@ -467,11 +468,11 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
 ! field calculators tell their master about the probes that they have
 ! report the probe number
            ibufer(1) = N_of_probes_block
-           CALL MPI_SEND(ibufer(1), 1, MPI_INTEGER, field_master, Rank_of_process, MPI_COMM_WORLD, request, ierr) 
+           CALL MPI_SEND(ibufer(1), 1, MPI_INTEGER, field_master, Rank_of_process, MPI_COMM_WORLD, ierr) 
 ! report the vector of probe order numbers in the cluster's probe list 
            IF (N_of_probes_block.GT.0) THEN
               ibufer(1:N_of_probes_block) = Probe_params_block_list(3,1:N_of_probes_block)
-              CALL MPI_SEND(ibufer(1:N_of_probes_block), N_of_probes_block, MPI_INTEGER, field_master, Rank_of_process+100000, MPI_COMM_WORLD, request, ierr) 
+              CALL MPI_SEND(ibufer(1:N_of_probes_block), N_of_probes_block, MPI_INTEGER, field_master, Rank_of_process+100000, MPI_COMM_WORLD, ierr) 
 ! allocate array to save the potential
               ALLOCATE(probe_F_block(1:N_of_probes_block), STAT = ALLOC_ERR)
            END IF
@@ -1274,11 +1275,11 @@ SUBROUTINE INITIATE_PROBE_DIAGNOSTICS
 
         ibufer(1) = N_of_probes_cluster
 ! send number of probes to the master with zero rank     
-        CALL MPI_SEND(ibufer(1:1), 1, MPI_INTEGER, 0, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+        CALL MPI_SEND(ibufer(1:1), 1, MPI_INTEGER, 0, Rank_horizontal, COMM_HORIZONTAL, ierr) 
         
 ! send global indices of probes to the master with zero rank
         IF (N_of_probes_cluster.GT.0) THEN
-           CALL MPI_SEND(List_of_probes_cluster, N_of_probes_cluster, MPI_INTEGER, 0, Rank_horizontal+100000, COMM_HORIZONTAL, request, ierr) 
+           CALL MPI_SEND(List_of_probes_cluster, N_of_probes_cluster, MPI_INTEGER, 0, Rank_horizontal+100000, COMM_HORIZONTAL, ierr) 
         END IF
 
      END IF   !###   IF (Rank_horizontal.EQ.0) THEN 
@@ -1300,9 +1301,9 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS
   USE CurrentProblemValues, ONLY : T_cntr
   USE Diagnostics, ONLY : N_of_probes, Save_probes_e_data_T_cntr, Save_probes_e_data_step, Save_probes_i_data_T_cntr, Save_probes_i_data_step
 
-  IMPLICIT NONE
+  use mpi
 
-  INCLUDE 'mpif.h'
+  IMPLICIT NONE
 
   INTEGER ierr
 
@@ -1331,9 +1332,9 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
   USE CurrentProblemValues
   USE ClusterAndItsBoundaries
 
-  IMPLICIT NONE  
+  use mpi
 
-  INCLUDE 'mpif.h'
+  IMPLICIT NONE  
 
   INTEGER ierr
   INTEGER stattus(MPI_STATUS_SIZE)
@@ -1411,7 +1412,7 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
         END IF
      ELSE
         IF (N_of_probes_block.GT.0) THEN
-           CALL MPI_SEND(probe_F_block, N_of_probes_block, MPI_REAL, field_master, Rank_of_process, MPI_COMM_WORLD, request, ierr) 
+           CALL MPI_SEND(probe_F_block, N_of_probes_block, MPI_REAL, field_master, Rank_of_process, MPI_COMM_WORLD, ierr) 
         END IF
      END IF
   
@@ -1863,7 +1864,7 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_e_DATA
         pos2 = pos2 + N_of_probes_cluster
         rbufer(pos1:pos2) = probe_VYVZe_cluster(1:N_of_probes_cluster)   ! +15*recsize
 
-        CALL MPI_SEND(rbufer(1:bufsize), bufsize, MPI_REAL, 0, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+        CALL MPI_SEND(rbufer(1:bufsize), bufsize, MPI_REAL, 0, Rank_horizontal, COMM_HORIZONTAL, ierr) 
  
         DEALLOCATE(rbufer)
 
@@ -1884,9 +1885,9 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_i_DATA
   USE ClusterAndItsBoundaries
   USE IonParticles, ONLY : N_spec, Qs, Ms
 
-  IMPLICIT NONE  
+  use mpi
 
-  INCLUDE 'mpif.h'
+  IMPLICIT NONE  
 
   INTEGER ierr
   INTEGER stattus(MPI_STATUS_SIZE)
@@ -2403,7 +2404,7 @@ SUBROUTINE DO_PROBE_DIAGNOSTICS_i_DATA
         rbufer(pos1:pos2) = probe_VYVZi_cluster(1:N_of_probes_cluster, s)
      END DO
      
-     CALL MPI_SEND(rbufer(1:bufsize), bufsize, MPI_REAL, 0, Rank_horizontal, COMM_HORIZONTAL, request, ierr) 
+     CALL MPI_SEND(rbufer(1:bufsize), bufsize, MPI_REAL, 0, Rank_horizontal, COMM_HORIZONTAL, ierr) 
  
      DEALLOCATE(rbufer)
 

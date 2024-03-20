@@ -17,12 +17,11 @@ SUBROUTINE SAVE_CHECKPOINT_MPIIO_2(n_sub)
   USE ExternalCircuit
 
   USE rng_wrapper
+  use mpi
 
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
-
-  INTEGER ierr
+  INTEGER errcode,ierr
   INTEGER stattus(MPI_STATUS_SIZE)
   INTEGER request
 
@@ -69,7 +68,8 @@ SUBROUTINE SAVE_CHECKPOINT_MPIIO_2(n_sub)
 ! fool proof
   IF (n_sub.NE.0) THEN
      PRINT '("Process :: ",i5," ERROR :: SAVE_CHECKPOINT_MPIIO_2 called at wrong time, n_sub = ",i4)', Rank_of_process, n_sub
-     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+     errcode=120
+     CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
   END IF
 
   CALL get_rng_state(state_var, state_ind, func)
@@ -327,7 +327,7 @@ SUBROUTINE SAVE_CHECKPOINT_MPIIO_2(n_sub)
 
   IF (Rank_of_process.GT.0) THEN  
      myibufer(1) = Rank_of_process
-     CALL MPI_SEND(myibufer(1), 1, MPI_INTEGER, Rank_of_process-1, Rank_of_process, MPI_COMM_WORLD, request, ierr)
+     CALL MPI_SEND(myibufer(1), 1, MPI_INTEGER, Rank_of_process-1, Rank_of_process, MPI_COMM_WORLD, ierr)
   END IF
 
   IF (Rank_of_process.EQ.0) PRINT '("Created checkpoint report file ",A21)', filename_report
@@ -360,12 +360,11 @@ SUBROUTINE READ_CHECKPOINT_MPIIO_2
   USE ExternalCircuit
 
   USE rng_wrapper
+  use mpi
 
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
-
-  INTEGER ierr
+  INTEGER errcode,ierr
   INTEGER stattus(MPI_STATUS_SIZE)
   INTEGER request
 
@@ -418,7 +417,8 @@ SUBROUTINE READ_CHECKPOINT_MPIIO_2
   IF (.NOT.exists) THEN
      PRINT '("Process :: ",i5,", ERROR in READ_CHECKPOINT_MPIIO :: file ",A20," not found program terminated")', &
           & Rank_of_process, filename_check
-     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+     errcode=121
+     CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
   END IF
 
 ! read the binary file 
@@ -644,7 +644,7 @@ SUBROUTINE READ_CHECKPOINT_MPIIO_2
 
   IF (Rank_of_process.GT.0) THEN  
      myibufer(1) = Rank_of_process
-     CALL MPI_SEND(myibufer(1), 1, MPI_INTEGER, Rank_of_process-1, Rank_of_process, MPI_COMM_WORLD, request, ierr)
+     CALL MPI_SEND(myibufer(1), 1, MPI_INTEGER, Rank_of_process-1, Rank_of_process, MPI_COMM_WORLD, ierr)
   END IF
 
   IF (Rank_of_process.EQ.0) PRINT '("Created checkpoint report file ",A20)', filename_report
@@ -714,12 +714,11 @@ SUBROUTINE SAVE_CHECKPOINT_POSIX(n_sub)
   USE ExternalCircuit
 
   USE rng_wrapper
+  use mpi
 
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
-
-  INTEGER ierr
+  INTEGER errcode,ierr
 
   INTEGER, INTENT(IN) :: n_sub
 
@@ -751,7 +750,8 @@ SUBROUTINE SAVE_CHECKPOINT_POSIX(n_sub)
 ! fool proof
   IF (n_sub.NE.0) THEN
      PRINT '("Process :: ",i5," ERROR :: SAVE_CHECKPOINT_POSIX called at wrong time, n_sub = ",i4)', Rank_of_process, n_sub
-     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+     errcode=122
+     CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
   END IF
 
   CALL get_rng_state(state_var, state_ind, func)
@@ -938,12 +938,11 @@ SUBROUTINE READ_CHECKPOINT_POSIX
   USE ExternalCircuit
 
   USE rng_wrapper
+  use mpi
 
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
-
-  INTEGER ierr
+  INTEGER errcode,ierr
 
   CHARACTER(47) filename_check         ! checkdir_TTTTTTTT/Tcntr_TTTTTTTT_proc_PPP.check
 !                                      ! ----x----I----x----I----x----I----x----I----x--
@@ -983,7 +982,8 @@ SUBROUTINE READ_CHECKPOINT_POSIX
   IF (.NOT.exists) THEN
      PRINT '("Process :: ",i5,", ERROR in READ_CHECKPOINT :: file ",A47," not found program terminated")', &
           & Rank_of_process, filename_check
-     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+     errcode=123
+     CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
   END IF
 
   CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
@@ -1131,11 +1131,11 @@ SUBROUTINE READ_A_CHECKPOINT
   USE ParallelOperationValues
   USE Checkpoints, ONLY : T_cntr_to_continue
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
-
-  INTEGER ierr
+  INTEGER errcode,ierr
   
   CHARACTER(20) filename_mpiio_check         ! Tcntr_TTTTTTTT.check
                                              ! ----x----I----x----I
@@ -1183,7 +1183,8 @@ SUBROUTINE READ_A_CHECKPOINT
   ELSE
      PRINT '("Process :: ",i5,", ERROR in READ_A_CHECKPOINT :: POSIX file ",A47," not found program terminated")', &
           & Rank_of_process, filename_posix_check
-     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+     errcode=124
+     CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
   END IF
 
 END SUBROUTINE READ_A_CHECKPOINT

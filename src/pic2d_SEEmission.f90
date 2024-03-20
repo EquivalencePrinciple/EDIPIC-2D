@@ -8,11 +8,12 @@ SUBROUTINE PROCESS_ELECTRON_INDUCED_ELECTRON_EMISSION(x, y, vx, vy, vz, tag, myo
 
   USE rng_wrapper
 
+  use mpi
+
   IMPLICIT NONE
 
-  INCLUDE 'mpif.h'
 
-  INTEGER ierr
+  INTEGER errcode,ierr
 
   REAL(8) x, y         ! primary electron coordinates
   REAL(8) vx, vy, vz   ! primary electron velocities
@@ -73,7 +74,8 @@ SUBROUTINE PROCESS_ELECTRON_INDUCED_ELECTRON_EMISSION(x, y, vx, vy, vz, tag, myo
      PRINT '("The total coefficient of elastic/inelastic backscattering is greater than 1 !!!")'
      PRINT '("elastic: ",f5.2," inelastic: ",f5.2)', coef_elastic, coef_inelastic
      PRINT '("Program will be terminated now :(")'
-     CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+     errcode=370
+     CALL MPI_ABORT(MPI_COMM_WORLD,errcode,ierr)
   END IF  
   coef_true = Coeff_SEE_True(energy_inc, theta_inc, myobject)
 
@@ -159,6 +161,8 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
   USE CurrentProblemValues
 
   USE rng_wrapper
+
+  use mpi
 
   IMPLICIT NONE
 
@@ -566,6 +570,8 @@ SUBROUTINE INJECT_INELASTIC_BACKSCATTERED_ELECTRON(x, y, v, tag, myobject, m, di
 
   USE rng_wrapper
 
+  use mpi
+
   IMPLICIT NONE
 
   REAL(8) x, y         ! primary electron coordinates
@@ -798,6 +804,8 @@ SUBROUTINE INJECT_TRUE_SECONDARY_ELECTRON(x, y, energy_inc, tag, myobject, m, di
   USE CurrentProblemValues
 
   USE rng_wrapper
+
+  use mpi
 
   IMPLICIT NONE
 
@@ -1054,6 +1062,8 @@ END SUBROUTINE INJECT_TRUE_SECONDARY_ELECTRON
 REAL(8) FUNCTION Coeff_SEE_Elastic(energy, theta, myobject)
 
   USE CurrentProblemValues !, ONLY : whole_object
+  use mpi
+
   IMPLICIT NONE
 
   REAL(8) energy       ! dim-less energy of incident electron
@@ -1103,6 +1113,8 @@ END FUNCTION Coeff_SEE_Elastic
 REAL(8) FUNCTION Coeff_SEE_Inelastic(energy, theta, myobject)
 
   USE CurrentProblemValues !, ONLY : whole_object
+  use mpi
+
   IMPLICIT NONE
 
   REAL(8) energy       ! dim-less energy of incident electron
@@ -1139,6 +1151,8 @@ END FUNCTION Coeff_SEE_Inelastic
 REAL(8) FUNCTION Coeff_SEE_True(energy, theta, myobject)
 
   USE CurrentProblemValues !, ONLY : whole_object
+  use mpi
+
   IMPLICIT NONE
 
   REAL(8) energy       ! dim-less energy of incident electron
@@ -1171,6 +1185,8 @@ END FUNCTION Coeff_SEE_True
 REAL(8) FUNCTION Coeff_SEE_Classic(energy, theta, myobject)
 
   USE CurrentProblemValues !, ONLY : whole_object
+  use mpi
+
   IMPLICIT NONE
 
   REAL(8) energy       ! dim-less energy of incident electron
